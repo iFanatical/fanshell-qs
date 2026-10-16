@@ -1,0 +1,10 @@
+[
+  {"name": "YouTube", "url": "https://youtube.com", "icon": "youtube"},
+  {"name": "Twitch", "url": "https://www.twitch.tv/directory/following", "icon": "twitch"},
+  {"name": "X", "url": "https://x.com/home", "icon": "twitter"},
+  {"name": "Plex", "url": "https://app.plex.tv/desktop/#!/", "icon": "plex"},
+  {"name": "LinkedIn", "url": "https://www.linkedin.com/feed/", "icon": "linkedin"},
+  {"name": "Gmail", "url": "https://mail.google.com/mail/u/0/#inbox", "icon": "gmail"},
+  {"name": "Reminders", "url": "https://tasks.google.com/tasks/", "icon": "view-task"},
+  {"name": "Drive", "url": "https://drive.google.com/drive/", "icon": "google-drive"}
+]

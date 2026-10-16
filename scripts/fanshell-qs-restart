@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Gracefully replace fanshell-qs-shell, allowing aboutToQuit helper cleanup.
+set -u
+
+shell_pattern='(^|/)fanshell-qs-shell( --no-duplicate)?$'
+# Only this user's shell: another user's session is none of our business.
+uid=$(id -u)
+
+shell_running() {
+    pgrep -u "$uid" -f "$shell_pattern" >/dev/null 2>&1
+}
+
+wait_for_exit() {
+    local attempts=${1:-40}
+    local i
+    for ((i = 0; i < attempts; ++i)); do
+        shell_running || return 0
+        sleep 0.05
+    done
+    return 1
+}
+
+# The normal path: QCoreApplication::quit() returns through the event loop,
+# emits aboutToQuit, and terminates all tracked helper process groups.
+fanshell-qs-shell ipc call shell quit >/dev/null 2>&1 || true
+wait_for_exit 40 || true
+
+# Bounded fallback for a stale/unresponsive IPC server. These patterns match
+# only the shell executable, never helper scripts or unrelated processes.
+if shell_running; then
+    pkill -TERM -u "$uid" -f "$shell_pattern" >/dev/null 2>&1 || true
+    wait_for_exit 20 || true
+fi
+if shell_running; then
+    pkill -KILL -u "$uid" -f "$shell_pattern" >/dev/null 2>&1 || true
+    wait_for_exit 10 || true
+fi
+
+fanshell-qs-shell --no-duplicate &

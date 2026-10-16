@@ -1,0 +1,16 @@
+-xc++
+-std=c++17
+-I/usr/include/qt6/QtWidgets
+-I/usr/include/qt6
+-DQT_WIDGETS_LIB
+-I/usr/include/qt6/QtGui
+-DQT_GUI_LIB
+-I/usr/include/qt6/QtDBus
+-DQT_DBUS_LIB
+-I/usr/include/qt6/QtNetwork
+-DQT_NETWORK_LIB
+-I/usr/include/qt6/QtCore
+-DQT_CORE_LIB
+-I/usr/lib64/qt6/mkspecs/linux-g++
+-D_REENTRANT
+-fPIC

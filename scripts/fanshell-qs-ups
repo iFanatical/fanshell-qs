@@ -1,0 +1,70 @@
+#!/bin/sh
+# fanshell-qs-ups — UPS telemetry over SNMP, for the power pill.
+#
+# Reads CyberPower's enterprise MIB (.1.3.6.1.4.1.3808) rather than the
+# standard RFC1628 UPS-MIB: an RMCARD205 populates RFC1628's
+# upsOutputPower with 0 and only offers percent load there, while the
+# enterprise tree reports real measured watts. Verified against an
+# OR1500LCDRM1U: 369 W idle, 520 W with all 24 threads busy.
+#
+# Prints nothing unless $FANSHELL_QS_UPS_HOST is set and answers, so the widget
+# falls back to the CPU+GPU estimate on machines with no UPS.
+#
+#   FANSHELL_QS_UPS_HOST        address of the SNMP card (unset = disabled)
+#   FANSHELL_QS_UPS_COMMUNITY   SNMPv1 community (default "public")
+#
+# Remember the card's own access control: it silently ignores any manager
+# whose source address is not in its NMS list, which looks exactly like a
+# timeout. The source address is the one the route to the card picks --
+# `ip route get <host>` -- not necessarily the address you think of as "this
+# machine".
+set -eu
+
+HOST="${FANSHELL_QS_UPS_HOST:-}"
+[ -n "$HOST" ] || exit 0
+COMMUNITY="${FANSHELL_QS_UPS_COMMUNITY:-public}"
+
+command -v snmpget >/dev/null 2>&1 || exit 0
+
+P=1.3.6.1.4.1.3808.1.1.1
+# Order matters: the reply lines come back in the order requested.
+#   watts  load%  ratedW  runtime(timeticks)  battery%  status  inputV(0.1V)
+OIDS="$P.4.2.5.0 $P.4.2.3.0 $P.1.2.7.0 $P.2.2.4.0 $P.2.2.1.0 $P.4.1.1.0 $P.3.2.1.0"
+
+# -Ovqt: values only, timeticks as a bare integer. Bounded so a card that has
+# gone away costs one second, not the default 6.
+out=$(timeout 6 snmpget -v1 -c "$COMMUNITY" -Ovqt -t 1 -r 1 "$HOST" $OIDS 2>/dev/null || true)
+[ -n "$out" ] || exit 0
+
+set -- $out
+[ $# -ge 7 ] || exit 0
+watts=$1; load=$2; rated=$3; ticks=$4; charge=$5; status=$6; involt=$7
+
+# Any non-numeric field means the card answered with an error string rather
+# than data; better to report nothing than to render "noSuchName W".
+for v in "$watts" "$load" "$rated" "$ticks" "$charge" "$status"; do
+	case "$v" in
+	''|*[!0-9]*) exit 0 ;;
+	esac
+done
+
+# Timeticks are hundredths of a second.
+mins=$((ticks / 6000))
+
+case "$status" in
+2) state="Online" ;;
+3) state="On battery" ;;
+4) state="Boost" ;;
+5) state="Sleeping" ;;
+6) state="Off" ;;
+*) state="Unknown" ;;
+esac
+
+printf 'watts=%s\n' "$watts"
+printf 'load=%s\n' "$load"
+printf 'rated=%s\n' "$rated"
+printf 'minutes=%s\n' "$mins"
+printf 'charge=%s\n' "$charge"
+printf 'state=%s\n' "$state"
+printf 'onbattery=%s\n' "$([ "$status" = 3 ] && echo 1 || echo 0)"
+printf 'input=%s\n' "$(awk -v v="$involt" 'BEGIN { printf "%.1f", v / 10 }')"

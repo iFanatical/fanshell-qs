@@ -1,0 +1,87 @@
+#!/bin/sh
+# fanshell-qs-powerdraw — instantaneous power draw, for the desktop power pill.
+#
+# Two independent sources, either of which may be missing:
+#
+#   CPU  /sys/class/powercap/intel-rapl:N/energy_uj is a *cumulative* microjoule
+#        counter, so watts means sampling it twice and dividing the delta by the
+#        elapsed time. It is root-only by default (a PLATYPUS mitigation); if it
+#        is unreadable the CPU line is simply omitted rather than guessed at.
+#        See tools/install-rapl-udev.sh.
+#   GPU  amdgpu hwmon reports watts directly in microwatts, already world
+#        readable. power1_average is a rolling average and preferred;
+#        power1_input is the instantaneous fallback. The label is normally PPT
+#        (Package Power Tracking), i.e. whole-board rather than just the die.
+#
+# Deliberately not reported: total *system* draw. Nothing on a typical desktop
+# can see it -- that needs a smart PSU or a UPS -- and summing CPU+GPU into
+# something called "total" would invite reading it as wall power, which it is
+# not. It excludes RAM, drives, fans, VRM losses and PSU inefficiency.
+#
+# Sample window in seconds; longer is steadier but slower to react.
+set -eu
+
+WINDOW="${FANSHELL_QS_POWER_WINDOW:-0.5}"
+# Override the powercap root (multi-socket boxes, or a fake tree for testing).
+POWERCAP="${FANSHELL_QS_POWERCAP_DIR:-/sys/class/powercap}"
+
+read_attr() {
+	cat "$1" 2>/dev/null || true
+}
+
+# ---- CPU: delta over the sample window ------------------------------------
+cpu=""
+zone=""
+for z in "$POWERCAP"/intel-rapl:[0-9]*; do
+	# The package zone is the one worth reporting; its :N:M children are
+	# subsets (core, uncore) that would double-count.
+	case "${z##*/}" in
+	*:*:*) continue ;;
+	esac
+	[ -r "$z/energy_uj" ] || continue
+	zone="$z"
+	break
+done
+
+if [ -n "$zone" ]; then
+	e1=$(read_attr "$zone/energy_uj")
+	t1=$(date +%s%N)
+	sleep "$WINDOW"
+	e2=$(read_attr "$zone/energy_uj")
+	t2=$(date +%s%N)
+	if [ -n "$e1" ] && [ -n "$e2" ]; then
+		# The counter wraps at max_energy_range_uj; a negative delta means
+		# it rolled over between samples.
+		max=$(read_attr "$zone/max_energy_range_uj")
+		cpu=$(awk -v a="$e1" -v b="$e2" -v t1="$t1" -v t2="$t2" -v m="$max" '
+			BEGIN {
+				d = b - a
+				if (d < 0 && m != "") d += m
+				secs = (t2 - t1) / 1000000000
+				if (secs <= 0 || d < 0) exit
+				printf "%.1f", (d / 1000000) / secs
+			}')
+	fi
+fi
+
+# ---- GPU: instantaneous, summed across cards ------------------------------
+gpu=""
+gpu_total=0
+gpu_found=0
+for h in /sys/class/hwmon/hwmon*; do
+	[ "$(read_attr "$h/name")" = "amdgpu" ] || continue
+	v=$(read_attr "$h/power1_average")
+	[ -n "$v" ] || v=$(read_attr "$h/power1_input")
+	[ -n "$v" ] || continue
+	gpu_total=$(awk -v t="$gpu_total" -v v="$v" 'BEGIN { printf "%.6f", t + v / 1000000 }')
+	gpu_found=1
+done
+[ "$gpu_found" = 1 ] && gpu=$(awk -v t="$gpu_total" 'BEGIN { printf "%.1f", t }')
+
+# Nothing readable at all: print nothing, and the widget hides.
+[ -n "$cpu" ] || [ -n "$gpu" ] || exit 0
+
+[ -n "$cpu" ] && printf 'cpu=%s\n' "$cpu"
+[ -n "$gpu" ] && printf 'gpu=%s\n' "$gpu"
+# Why the CPU figure is missing, so the popup can say so rather than stay blank.
+[ -n "$cpu" ] || printf 'cpu_locked=1\n'

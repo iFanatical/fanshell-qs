@@ -1,0 +1,65 @@
+#!/bin/sh
+# fanshell-qs-battery — battery level/status/icon for the Battery widget.
+# Prints nothing on a machine with no battery, so the widget hides itself.
+# Time remaining is computed from the kernel's own energy/charge + power/current
+# rate attributes (whichever the driver exposes) -- no upower dependency. On a
+# multi-battery machine (or to point this at a fake power_supply dir for
+# testing), override with $FANSHELL_QS_BATTERY_PATH.
+set -eu
+
+# A sysfs attribute can exist as a file and still fail to read: a driver that
+# cannot report instantaneous current answers -ENODEV on current_now, which
+# `cat` reports as "No such device". Under `set -e` an unguarded read like that
+# aborts the whole script, and since the widget treats no output as "no
+# battery", one unsupported attribute made the pill vanish entirely on a laptop
+# that was otherwise reporting capacity and status perfectly well. Never let a
+# single attribute take the rest down with it.
+read_attr() {
+	cat "$1" 2>/dev/null || true
+}
+
+BAT="${FANSHELL_QS_BATTERY_PATH:-$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -1)}"
+[ -n "$BAT" ] || exit 0
+cap=$(read_attr "$BAT/capacity")
+st=$(read_attr "$BAT/status")
+[ -n "$cap" ] || exit 0
+[ -n "$st" ] || st="Unknown"
+
+if [ "$st" = "Charging" ]; then icon="󰂅"; color="#9ece6a"
+elif [ "$cap" -le 5 ];  then icon="󰁺"; color="#f7768e"
+elif [ "$cap" -le 20 ]; then icon="󰁻"; color="#f7768e"
+elif [ "$cap" -le 40 ]; then icon="󰁽"; color="#e0af68"
+elif [ "$cap" -le 60 ]; then icon="󰁿"; color="#e0af68"
+elif [ "$cap" -le 80 ]; then icon="󰂁"; color="#0db9d7"
+else                         icon="󰁹"; color="#0db9d7"
+fi
+
+# Prefer the energy_* set, fall back to charge_*. Selected on whether the
+# values actually read back, not on whether the files exist -- see read_attr.
+now=$(read_attr "$BAT/energy_now")
+full=$(read_attr "$BAT/energy_full")
+rate=$(read_attr "$BAT/power_now")
+if [ -z "$now" ] || [ -z "$rate" ]; then
+	now=$(read_attr "$BAT/charge_now")
+	full=$(read_attr "$BAT/charge_full")
+	rate=$(read_attr "$BAT/current_now")
+fi
+
+# No usable rate just means no time estimate; the percentage still stands.
+mins=""
+if [ -n "$now" ] && [ -n "$rate" ] && [ "$rate" -gt 0 ] 2>/dev/null; then
+	case "$st" in
+	Charging)
+		[ -n "$full" ] && mins=$(( (full - now) * 60 / rate ))
+		;;
+	Discharging)
+		mins=$((now * 60 / rate))
+		;;
+	esac
+fi
+
+printf 'percent=%s\n' "$cap"
+printf 'status=%s\n' "$st"
+printf 'minutes=%s\n' "$mins"
+printf 'icon=%s\n' "$icon"
+printf 'color=%s\n' "$color"

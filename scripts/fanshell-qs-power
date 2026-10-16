@@ -1,0 +1,38 @@
+#!/bin/sh
+# fanshell-qs-power — power actions for the System dropdown's power buttons.
+# Power-off/reboot/suspend go through loginctl, which talks to whichever of
+# systemd-logind (Fedora) or elogind (Gentoo without systemd) is running, so
+# the same script serves both. loginctl's polkit rules decide whether the
+# active session user can do these without a password prompt.
+set -eu
+
+lock() {
+	# Themed i3lock-color, or whatever locker is installed: see that script.
+	exec fanshell-qs-lock
+}
+
+logout() {
+	# The window manager's own quit: the same clean shutdown path as its
+	# quit keybind, so the session ends with whatever follows it in
+	# .xinitrc. Only the one that is running answers.
+	if command -v oxwmctl >/dev/null 2>&1 && oxwmctl dispatch quit >/dev/null 2>&1; then
+		exit 0
+	fi
+	if command -v qtile >/dev/null 2>&1 \
+			&& qtile cmd-obj -o cmd -f shutdown >/dev/null 2>&1; then
+		exit 0
+	fi
+	loginctl terminate-session "${XDG_SESSION_ID:-}"
+}
+
+case "${1:-}" in
+poweroff) exec loginctl poweroff ;;
+reboot)   exec loginctl reboot ;;
+suspend)  exec loginctl suspend ;;
+lock)     lock ;;
+logout)   logout ;;
+*)
+	printf 'usage: %s [poweroff|reboot|suspend|lock|logout]\n' "$0" >&2
+	exit 2
+	;;
+esac

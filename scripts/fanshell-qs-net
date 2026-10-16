@@ -1,0 +1,273 @@
+#!/bin/sh
+# fanshell-qs-net — backend-adaptive networking for the panel's network widget.
+#
+# Backends, auto-detected:
+#   nm  — NetworkManager present & running (laptop): full Wi-Fi management.
+#   ip  — no NetworkManager (desktop with custom net-bridge.sh): wired/bridge/
+#         VLAN status + re-apply, via iproute2.
+#
+# Emits key=value lines plus tab-separated rows; `watch` prints blocks
+# separated by a blank line (\n\n), matching the other fanshell-qs bridges.
+#
+#   fanshell-qs-net status | watch
+#   fanshell-qs-net wifi-list | wifi-scan
+#   fanshell-qs-net wifi-connect <ssid> [--password-stdin]
+#   fanshell-qs-net wifi-disconnect | wifi-forget <ssid> | radio on|off
+#   fanshell-qs-net reapply                 (ip backend: re-run net-bridge.sh)
+#   fanshell-qs-net link-up <if> | link-down <if>
+set -u
+
+has() { command -v "$1" >/dev/null 2>&1; }
+nm_running() { has nmcli && nmcli general status >/dev/null 2>&1; }
+backend() { if nm_running; then echo nm; else echo ip; fi; }
+
+TAB=$(printf '\t')
+BRIDGE_SCRIPT="${FANSHELL_QS_NET_BRIDGE:-/usr/local/bin/net-bridge.sh}"
+
+primary_dev() {
+	ip route show default 2>/dev/null |
+		awk '{for(i=1;i<=NF;i++) if($i=="dev"){print $(i+1); exit}}'
+}
+default_gw() {
+	ip route show default 2>/dev/null | awk '{print $3; exit}'
+}
+wifi_dev() {
+	nmcli -t -f DEVICE,TYPE device status 2>/dev/null |
+		awk -F: '$2=="wifi"{print $1; exit}'
+}
+
+# ---- NetworkManager backend ------------------------------------------------
+
+nm_status() {
+	dev=$(primary_dev)
+	printf 'backend=nm\n'
+	printf 'wifi_enabled=%s\n' "$(nmcli -t radio wifi 2>/dev/null || echo unknown)"
+	printf 'connectivity=%s\n' "$(nmcli networking connectivity 2>/dev/null || echo unknown)"
+	printf 'device=%s\n' "${dev:-}"
+
+	kind=none; name=; ip4=; gw=; ssid=; signal=; security=
+	if [ -n "${dev:-}" ]; then
+		while IFS=: read -r key val; do
+			case "$key" in
+			GENERAL.TYPE) kind=$val ;;
+			GENERAL.CONNECTION) name=$val ;;
+			IP4.ADDRESS*) [ -z "$ip4" ] && ip4=$val ;;
+			IP4.GATEWAY) gw=$val ;;
+			esac
+		done <<-EOF
+		$(nmcli -t -f GENERAL.TYPE,GENERAL.CONNECTION,IP4.ADDRESS,IP4.GATEWAY device show "$dev" 2>/dev/null)
+		EOF
+		if [ "$kind" = wifi ]; then
+			ssid=$name
+			active=$(nmcli -t -f ACTIVE,SIGNAL,SECURITY device wifi list ifname "$dev" 2>/dev/null |
+				awk -F: '$1=="yes"{print $2 "\t" $3; exit}')
+			signal=${active%%"$TAB"*}
+			security=${active#*"$TAB"}
+		fi
+	fi
+	printf 'kind=%s\n' "$kind"
+	printf 'name=%s\n' "$name"
+	printf 'ssid=%s\n' "$ssid"
+	printf 'signal=%s\n' "$signal"
+	printf 'security=%s\n' "$security"
+	printf 'ip=%s\n' "$ip4"
+	printf 'gateway=%s\n' "${gw:-$(default_gw)}"
+}
+
+nm_signal() {
+	nmcli -t -f ACTIVE,SIGNAL,SECURITY device wifi list 2>/dev/null |
+		awk -F: '$1=="yes"{print "signal=" $2; print "security=" $3; exit}'
+}
+
+nm_wifi_list() {
+	# fields ordered so SSID (may contain ':') is last; sentinel-escape '\:'.
+	nmcli -t -f IN-USE,SIGNAL,SECURITY,SSID device wifi list 2>/dev/null |
+		sed 's/\\:/\x01/g' |
+		awk -F: '
+			{
+				inuse = ($1=="*") ? 1 : 0
+				signal = $2 + 0
+				sec = $3
+				ssid = $4; for (i = 5; i <= NF; i++) ssid = ssid ":" $i
+				gsub(/\x01/, ":", ssid)
+				if (ssid == "") next
+				if (!(ssid in seen) || signal > sig[ssid]) {
+					sig[ssid] = signal; secu[ssid] = sec; seen[ssid] = 1
+				}
+				if (inuse) act[ssid] = 1
+			}
+			END {
+				for (s in seen)
+					printf "%s\t%s\t%s\t%s\n", s, sig[s], secu[s], (act[s] ? 1 : 0)
+			}' |
+		sort -t"$TAB" -k2 -nr
+}
+
+# Security column of the visible network named $1 (SSID last, '\:'-escaped).
+nm_wifi_security() {
+	nmcli -t -f SECURITY,SSID device wifi list 2>/dev/null |
+		sed 's/\\:/\x01/g' |
+		S="$1" awk -F: '
+			{
+				ssid = $2; for (i = 3; i <= NF; i++) ssid = ssid ":" $i
+				gsub(/\x01/, ":", ssid)
+				if (ssid == ENVIRON["S"]) { print $1; exit }
+			}'
+}
+
+# Join a secured network without the password reaching any command line
+# (`nmcli device wifi connect X password Y` would put it in /proc/*/cmdline).
+# nmcli's passwd-file is read from a private file in the runtime dir instead;
+# printf is a shell builtin, so writing that file spawns no process either.
+nm_connect_secret() {
+	ssid=$1; pass=$2
+	sec=$(nm_wifi_security "$ssid")
+	case "$sec" in
+	*802.1X*) return 1 ;;	# enterprise needs an identity; not handled here
+	*WPA3*)
+		case "$sec" in
+		*WPA1* | *WPA2*) key=wpa-psk ;;	# transition mode: PSK still works
+		*) key=sae ;;
+		esac
+		prop=802-11-wireless-security.psk ;;
+	*WEP*) key=none; prop=802-11-wireless-security.wep-key0 ;;
+	*) key=wpa-psk; prop=802-11-wireless-security.psk ;;
+	esac
+
+	pwfile=$(umask 077 && mktemp "${XDG_RUNTIME_DIR:-/tmp}/fanshell-qs-net.XXXXXX") ||
+		return 1
+	trap 'rm -f "$pwfile"' EXIT
+	printf '%s:%s\n' "$prop" "$pass" >"$pwfile"
+
+	nmcli connection up id "$ssid" passwd-file "$pwfile" >/dev/null 2>&1
+	rc=$?
+	# 10 = no such connection: first time on this network, so create the
+	# profile (without its secret) and activate it with the passwd-file.
+	if [ "$rc" -eq 10 ]; then
+		nmcli connection add type wifi con-name "$ssid" ssid "$ssid" \
+			wifi-sec.key-mgmt "$key" >/dev/null 2>&1 || return 1
+		if nmcli connection up id "$ssid" passwd-file "$pwfile" >/dev/null 2>&1; then
+			rc=0
+		else
+			# A wrong password must not leave a half-made profile behind.
+			nmcli connection delete id "$ssid" >/dev/null 2>&1
+		fi
+	fi
+	rm -f "$pwfile"
+	return "$rc"
+}
+
+# ---- iproute2 backend (custom bridge/VLAN desktop) -------------------------
+
+ip_iftype() {
+	# bridge | vlan | ethernet | wifi | other
+	case "$1" in wlan* | wlp*) echo wifi; return ;; esac
+	det=$(ip -d link show "$1" 2>/dev/null)
+	case "$det" in
+	*" vlan "*) echo vlan ;;
+	*" bridge "*) echo bridge ;;
+	*" bridge_slave "*) echo ethernet ;;
+	*) echo ethernet ;;
+	esac
+}
+
+ip_status() {
+	printf 'backend=ip\n'
+	printf 'gateway=%s\n' "$(default_gw)"
+	printf 'device=%s\n' "$(primary_dev)"
+	# one `link` row per interface (skip loopback)
+	ip -br addr show 2>/dev/null | while read -r name state rest; do
+		[ "$name" = "lo" ] && continue
+		base=${name%@*}          # strip vlan parent suffix (br0.1000@br0)
+		addr=$(printf '%s\n' "$rest" | awk '{print $1}')
+		case "$addr" in inet6* | fe80* | "") addr="" ;; esac
+		printf 'link\t%s\t%s\t%s\t%s\n' "$base" "$state" "$(ip_iftype "$base")" "$addr"
+	done
+}
+
+# ---- dispatch --------------------------------------------------------------
+
+status() { if [ "$(backend)" = nm ]; then nm_status; else ip_status; fi; }
+
+watch() {
+	# The shell places this watcher in a dedicated process group. Relay the
+	# parent-death SIGTERM to nmcli/the pipeline so no grandchildren survive a
+	# shell crash or forced restart.
+	trap 'trap - TERM HUP INT; kill -TERM 0; exit 0' TERM HUP INT
+	b=$(backend)
+	if [ "$b" = nm ]; then nm_status; else ip_status; fi
+	printf '\n'
+	if [ "$b" = nm ]; then
+		# In the background and waited on: sh runs a trap only once the
+		# foreground command returns, and `nmcli monitor` never does, so a
+		# foreground pipeline here left the trap -- and nmcli -- running for
+		# ever after the shell died. `wait` returns as soon as a signal comes.
+		nmcli monitor 2>/dev/null | while IFS= read -r _line; do
+			nm_status
+			printf '\n'
+		done &
+		wait
+	else
+		while :; do
+			sleep 3
+			status
+			printf '\n'
+		done
+	fi
+}
+
+cmd=${1:-status}
+case "$cmd" in
+status) status ;;
+signal) nm_signal ;;
+watch) watch ;;
+wifi-list) nm_running && nm_wifi_list ;;
+wifi-scan) nm_running && nmcli device wifi rescan >/dev/null 2>&1 || true ;;
+wifi-connect)
+	nm_running || exit 0
+	ssid=${2:-}; pass=
+	[ -n "$ssid" ] || { echo "usage: $0 wifi-connect <ssid> [--password-stdin]" >&2; exit 2; }
+	# The password arrives on stdin, never as an argument: a command line is
+	# readable by every local process through /proc/<pid>/cmdline.
+	if [ "${3:-}" = "--password-stdin" ]; then
+		IFS= read -r pass || true
+	fi
+	if [ -n "$pass" ]; then
+		nm_connect_secret "$ssid" "$pass" || true
+	else
+		nmcli device wifi connect "$ssid" >/dev/null 2>&1 || true
+	fi
+	status
+	;;
+wifi-disconnect)
+	nm_running || exit 0
+	dev=$(wifi_dev); [ -n "$dev" ] && nmcli device disconnect "$dev" >/dev/null 2>&1 || true
+	status
+	;;
+wifi-forget)
+	nm_running || exit 0
+	[ -n "${2:-}" ] && nmcli connection delete id "$2" >/dev/null 2>&1 || true
+	status
+	;;
+radio)
+	nm_running || exit 0
+	nmcli radio wifi "${2:-on}" >/dev/null 2>&1 || true
+	status
+	;;
+reapply)
+	[ -x "$BRIDGE_SCRIPT" ] && sudo -n "$BRIDGE_SCRIPT" >/dev/null 2>&1 || true
+	status
+	;;
+link-up)
+	[ -n "${2:-}" ] && sudo -n ip link set "$2" up >/dev/null 2>&1 || true
+	status
+	;;
+link-down)
+	[ -n "${2:-}" ] && sudo -n ip link set "$2" down >/dev/null 2>&1 || true
+	status
+	;;
+*)
+	echo "usage: $0 [status|watch|wifi-list|wifi-scan|wifi-connect|wifi-disconnect|wifi-forget|radio|reapply|link-up|link-down]" >&2
+	exit 2
+	;;
+esac

@@ -1,0 +1,11 @@
+# Editor / tooling
+.claude
+
+# Build output
+*.o
+/shell/fanshell-qs-shell
+/shell/moc_*.cpp
+
+# Patch cruft
+*.orig
+*.rej

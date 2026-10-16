@@ -1,0 +1,125 @@
+# ~/.config/sxhkd/sxhkdrc — oxwm session.
+#
+# Mirrors the program, shell and media bindings in ~/.config/hypr/user/
+# keybindings. Window-management bindings (workspaces, focus, layouts,
+# scratchpads) live in ~/.config/oxwm/config.lua; a key can only be grabbed
+# by one of the two.
+
+# programs (user/programs.lua)
+super + Return
+	alacritty
+
+super + e
+	thunar
+
+super + b
+	gtk-launch "$(xdg-settings get default-web-browser)"
+
+super + alt + b
+	firefox
+
+super + p
+	pavucontrol
+
+super + shift + p
+	fanshell-qs-restart
+
+# terminal opacity (super + shift + minus / equal)
+super + shift + underscore
+	$SCRIPTS/alacritty-opacity --opacdown
+
+super + shift + plus
+	$SCRIPTS/alacritty-opacity --opacup
+
+# color picker (hyprpicker)
+alt + c
+	$SCRIPTS/xcolorpick.sh
+
+# shell
+super + alt + space
+	fanshell-qs-shell ipc call menu toggle
+
+super + space
+	fanshell-qs-shell ipc call launcher toggle
+
+super + r
+	fanshell-qs-shell ipc call runner toggle
+
+super + w
+	fanshell-qs-shell ipc call wallpaper toggle
+
+super + l
+	fanshell-qs-shell ipc call lock now
+
+super + semicolon
+	fanshell-qs-shell ipc call emoji toggle
+
+alt + n
+	fanshell-qs-shell ipc call notifications toggle-dnd
+
+alt + v
+	fanshell-qs-shell ipc call vpn tun1
+
+alt + shift + v
+	fanshell-qs-shell ipc call vpn tun2
+
+super + alt + v
+	fanshell-qs-shell ipc call vpn refresh
+
+# screenshots (hyprshot)
+Print
+	$SCRIPTS/screenshot.sh
+
+shift + Print
+	$SCRIPTS/screenshot.sh output
+
+ctrl + alt + Tab
+	$SCRIPTS/screenshot.sh
+
+ctrl + shift + alt + Tab
+	$SCRIPTS/screenshot.sh output
+
+# media keys
+XF86AudioPlay
+	fanshell-qs-shell ipc call media play-pause
+
+XF86AudioPause
+	fanshell-qs-shell ipc call media play-pause
+
+XF86AudioNext
+	fanshell-qs-shell ipc call media next
+
+XF86AudioPrev
+	fanshell-qs-shell ipc call media previous
+
+XF86AudioRaiseVolume
+	fanshell-qs-shell ipc call audio volume-up
+
+XF86AudioLowerVolume
+	fanshell-qs-shell ipc call audio volume-down
+
+XF86AudioMute
+	fanshell-qs-shell ipc call audio toggle-mute
+
+XF86AudioMicMute
+	fanshell-qs-shell ipc call audio toggle-mic
+
+XF86Calculator
+	galculator
+
+# brightness
+XF86MonBrightnessUp
+	fanshell-qs-shell ipc call brightness up
+
+XF86MonBrightnessDown
+	fanshell-qs-shell ipc call brightness down
+
+super + F1
+	fanshell-qs-shell ipc call brightness monitor-up
+
+super + F2
+	fanshell-qs-shell ipc call brightness monitor-down
+
+# reload sxhkd
+super + Escape
+	pkill -USR1 -x sxhkd

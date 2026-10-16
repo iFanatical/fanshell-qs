@@ -1,0 +1,90 @@
+#!/bin/sh
+# fanshell-qs-vpn — WireGuard tunnel control for the panel's VPN widget.
+# Controls tun1..tunN as exposed by FANSHELL_TUN_COUNT (default one). wg-quick
+# needs root; we use sudo -n (passwordless) when not already root.
+set -eu
+
+TUN_COUNT="${FANSHELL_TUN_COUNT:-1}"
+case "$TUN_COUNT" in
+''|*[!0-9]*|???*) TUN_COUNT=1 ;;
+esac
+if [ "$TUN_COUNT" -lt 1 ]; then TUN_COUNT=1; fi
+if [ "$TUN_COUNT" -gt 32 ]; then TUN_COUNT=32; fi
+
+run_wg() {
+	if [ "$(id -u)" -eq 0 ]; then
+		wg-quick "$@"
+	else
+		sudo -n wg-quick "$@"
+	fi
+}
+
+is_up() {
+	ip link show "$1" >/dev/null 2>&1
+}
+
+valid_tunnel() {
+	i=1
+	while [ "$i" -le "$TUN_COUNT" ]; do
+		[ "$1" = "tun$i" ] && return 0
+		i=$((i + 1))
+	done
+	return 1
+}
+
+print_status() {
+	i=1
+	while [ "$i" -le "$TUN_COUNT" ]; do
+		tunnel="tun$i"
+		if is_up "$tunnel"; then
+			ip_addr=$(ip -o -4 addr show "$tunnel" 2>/dev/null | awk '{print $4; exit}')
+			printf '%s=up\n' "$tunnel"
+			printf '%s_ip=%s\n' "$tunnel" "${ip_addr:-}"
+		else
+			printf '%s=down\n' "$tunnel"
+			printf '%s_ip=\n' "$tunnel"
+		fi
+		i=$((i + 1))
+	done
+}
+
+case "${1:-status}" in
+status)
+	print_status
+	;;
+select)
+	tunnel="${2:-}"
+	if ! valid_tunnel "$tunnel"; then
+		printf 'invalid tunnel: %s (configured range is tun1..tun%s)\n' \
+			"$tunnel" "$TUN_COUNT" >&2
+		exit 2
+	fi
+	if is_up "$tunnel"; then
+		run_wg down "$tunnel" >/dev/null 2>&1 || true
+		if is_up "$tunnel"; then result=error; else result=ok; fi
+	else
+		result=ok
+		i=1
+		while [ "$i" -le "$TUN_COUNT" ]; do
+			other="tun$i"
+			i=$((i + 1))
+			[ "$other" = "$tunnel" ] && continue
+			if is_up "$other"; then
+				run_wg down "$other" >/dev/null 2>&1 || true
+				if is_up "$other"; then result=error; fi
+			fi
+		done
+		if [ "$result" = ok ]; then
+			run_wg up "$tunnel" >/dev/null 2>&1 || true
+			if ! is_up "$tunnel"; then result=error; fi
+		fi
+	fi
+	print_status
+	printf 'iface=%s\n' "$tunnel"
+	printf 'result=%s\n' "$result"
+	;;
+*)
+	printf 'usage: %s [status|select tunN]\n' "$0" >&2
+	exit 2
+	;;
+esac

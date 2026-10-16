@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# fanshell-qs-outputs — saved output layouts, applied with xrandr.
+#
+#   fanshell-qs-outputs apply [FILE]   apply the layout saved for the outputs
+#                                     connected now (from FILE if given)
+#   fanshell-qs-outputs save FILE      merge FILE's layouts into outputs.conf
+#   fanshell-qs-outputs key            the current layout key
+#
+# A layout is saved per *set* of connected outputs, so the laptop alone, the
+# laptop docked and the desktop each find their own without any hostname or
+# battery test. The key is the connected output names, byte-sorted and joined
+# with '+'. Files are INI-like:
+#
+#   [DisplayPort-0+DisplayPort-1]
+#   DisplayPort-0 mode=1920x1080 rate=100.00 pos=0x0 rotate=normal
+#   DisplayPort-1 mode=1920x1080 rate=100.00 pos=1920x0 rotate=normal primary
+#
+# `mode=auto` means the output's preferred mode; a bare `off` disables it.
+# outputs.conf in ~/.config/fanshell-qs is written by the shell's Displays
+# popup; outputs.defaults.conf beside it (linked from the repo) is consulted
+# when outputs.conf has nothing for the current key.
+#
+# apply exits 0 when there is nothing saved for this key, and otherwise with
+# xrandr's own status, so the shell can tell a refused mode from success.
+set -euo pipefail
+
+dir="${XDG_CONFIG_HOME:-$HOME/.config}/fanshell-qs"
+conf="$dir/outputs.conf"
+defaults="$dir/outputs.defaults.conf"
+
+query=$(xrandr --query)
+
+current_key() {
+    awk '$2 == "connected" { print $1 }' <<< "$query" | LC_ALL=C sort | paste -sd+ -
+}
+
+# Print the body lines of section $2 in file $1; status 1 when it is absent.
+section() {
+    [[ -r $1 ]] || return 1
+    awk -v want="[$2]" '
+        /^[[:space:]]*(#|$)/ { next }
+        /^\[/ { inside = ($0 == want); if (inside) found = 1; next }
+        inside { print }
+        END { exit found ? 0 : 1 }
+    ' "$1"
+}
+
+apply() {
+    local key lines file
+    key=$(current_key)
+    [[ -n $key ]] || exit 0
+    if (($# > 0)); then
+        lines=$(section "$1" "$key") || { echo "no layout for $key in $1" >&2; exit 0; }
+    else
+        lines=""
+        for file in "$conf" "$defaults"; do
+            lines=$(section "$file" "$key") && break
+        done
+        [[ -n $lines ]] || exit 0
+    fi
+
+    local -a args=()
+    local name rest word
+    while read -r name rest; do
+        [[ -n $name ]] || continue
+        args+=(--output "$name")
+        if [[ $rest == off ]]; then
+            args+=(--off)
+            continue
+        fi
+        for word in $rest; do
+            case $word in
+            mode=auto) args+=(--auto) ;;
+            mode=*) args+=(--mode "${word#mode=}") ;;
+            rate=*) args+=(--rate "${word#rate=}") ;;
+            pos=*) args+=(--pos "${word#pos=}") ;;
+            rotate=*) args+=(--rotate "${word#rotate=}") ;;
+            primary) args+=(--primary) ;;
+            esac
+        done
+    done <<< "$lines"
+
+    # An output unplugged while it was on keeps its CRTC until told otherwise.
+    while read -r name; do
+        args+=(--output "$name" --off)
+    done < <(awk '$2 == "disconnected" && $3 ~ /^[0-9]+x[0-9]+\+/ { print $1 }' <<< "$query")
+
+    local status=0
+    xrandr "${args[@]}" || status=$?
+    # oxwm only notices layout changes that resize the root window on its
+    # own; before oxwm is up (from .xinitrc), or under qtile, which re-reads
+    # the screens after any RandR change itself, this just fails quietly.
+    if command -v oxwmctl >/dev/null 2>&1; then
+        oxwmctl rescanmonitors >/dev/null 2>&1 || true
+    fi
+    exit "$status"
+}
+
+save() {
+    local src=$1 tmp keys
+    [[ -r $src ]] || { echo "cannot read $src" >&2; exit 1; }
+    mkdir -p "$dir"
+    keys=$(sed -n 's/^\[\(.*\)\][[:space:]]*$/\1/p' "$src")
+    tmp=$(mktemp "$dir/.outputs.conf.XXXXXX")
+    {
+        echo "# Output layouts, one section per set of connected outputs."
+        echo "# Written by the Displays popup; see fanshell-qs-outputs."
+        # Every section of the old file except those being replaced.
+        if [[ -r $conf ]]; then
+            awk -v keys="$keys" '
+                BEGIN { n = split(keys, k, "\n"); for (i = 1; i <= n; i++) drop["[" k[i] "]"] = 1 }
+                /^[[:space:]]*#/ { next }
+                /^\[/ { skip = ($0 in drop) }
+                !skip && NF { print }
+            ' "$conf"
+        fi
+        grep -v '^[[:space:]]*\(#\|$\)' "$src"
+    } > "$tmp"
+    mv -f "$tmp" "$conf"
+}
+
+case "${1:-}" in
+apply) shift; apply "$@" ;;
+save) save "${2:?file}" ;;
+key) current_key ;;
+*)
+    printf 'usage: %s apply [FILE] | save FILE | key\n' "${0##*/}" >&2
+    exit 2
+    ;;
+esac

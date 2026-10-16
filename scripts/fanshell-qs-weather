@@ -1,0 +1,25 @@
+#!/bin/sh
+# fanshell-qs-weather — current temperature + condition for the panel weather
+# widget. Uses wttr.in (no API key needed; geolocates by the requesting IP).
+# Fahrenheit by default, override with FANSHELL_QS_WEATHER_UNIT=C for Celsius.
+# Prints nothing on any failure (offline, wttr.in down, curl missing), so the
+# widget hides.
+set -eu
+
+command -v curl >/dev/null 2>&1 || exit 0
+
+case "${FANSHELL_QS_WEATHER_UNIT:-F}" in
+	[Cc]*) unitflag=m ;;	# wttr.in: m = metric (Celsius)
+	*)     unitflag=u ;;	# wttr.in: u = USCS (Fahrenheit)
+esac
+
+data=$(curl -fsS --max-time 5 --connect-timeout 3 \
+	"https://wttr.in/?format=%t|%C&$unitflag" 2>/dev/null) || exit 0
+[ -n "$data" ] || exit 0
+temp=${data%%|*}
+cond=${data#*|}
+temp=${temp#+}	# wttr.in signs positive readings ("+72°F"); drop the "+"
+
+printf 'icon=\n'
+printf 'temp=%s\n' "$temp"
+printf 'cond=%s\n' "$cond"

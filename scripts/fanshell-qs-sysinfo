@@ -1,0 +1,68 @@
+#!/bin/sh
+# fanshell-qs-sysinfo — CPU/memory/temperature snapshot for the System dropdown.
+# CPU usage is measured over a short in-script sample window (no state file
+# between invocations, unlike e.g. `top`). Temperature is best-effort: only
+# k10temp (AMD Tctl) and coretemp (Intel "Package id N") are recognized;
+# prints empty if neither is present, and the panel hides that row.
+set -eu
+
+read_cpu() {
+	awk '/^cpu / { for (i = 2; i <= NF; i++) t += $i; idle = $5 + $6; print t, idle }' \
+		/proc/stat
+}
+
+set -- $(read_cpu)
+t1=$1 i1=$2
+sleep 0.2
+set -- $(read_cpu)
+t2=$1 i2=$2
+
+dt=$((t2 - t1))
+di=$((i2 - i1))
+cpu=0
+[ "$dt" -gt 0 ] && cpu=$(((100 * (dt - di)) / dt))
+
+mem_line=$(free -m | awk '/^Mem:/ {print $2, $3}')
+mem_total=${mem_line%% *}
+mem_used=${mem_line#* }
+mem_pct=0
+[ "$mem_total" -gt 0 ] && mem_pct=$((mem_used * 100 / mem_total))
+
+temp=""
+for h in /sys/class/hwmon/*; do
+	[ -e "$h/name" ] || continue
+	name=$(cat "$h/name" 2>/dev/null)
+	raw=""
+	case "$name" in
+	k10temp)
+		for f in "$h"/temp*_label; do
+			[ -f "$f" ] || continue
+			if [ "$(cat "$f")" = "Tctl" ]; then
+				raw=$(cat "${f%_label}_input" 2>/dev/null)
+				break
+			fi
+		done
+		;;
+	coretemp)
+		for f in "$h"/temp*_label; do
+			[ -f "$f" ] || continue
+			case "$(cat "$f")" in
+			"Package id"*)
+				raw=$(cat "${f%_label}_input" 2>/dev/null)
+				break
+				;;
+			esac
+		done
+		;;
+	esac
+	if [ -n "$raw" ]; then
+		temp=$((raw / 1000))
+		break
+	fi
+done
+
+printf 'cpu=%s\n' "$cpu"
+printf 'mem_used=%s\n' "$mem_used"
+printf 'mem_total=%s\n' "$mem_total"
+printf 'mem_pct=%s\n' "$mem_pct"
+printf 'temp=%s\n' "$temp"

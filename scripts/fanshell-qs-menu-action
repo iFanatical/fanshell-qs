@@ -1,0 +1,135 @@
+#!/usr/bin/env bash
+# Actions for the native Fanos menu.
+set -euo pipefail
+
+action=${1:-}
+config_root=${XDG_CONFIG_HOME:-$HOME/.config}
+source_root=${FANSHELL_QS_SOURCE_DIR:-$HOME/projects/window-managers/fanshell-qs}
+
+terminal() {
+    local -a terminal_cmd
+    local identity
+    case "$action" in
+        about) identity=fanos-about ;;
+        execute:update) identity=fanos-update ;;
+        edit:*) identity=fanos-config ;;
+        execute:audio|execute:dinit|execute:gpu) identity=fanos-troubleshooting ;;
+        *) identity=fanos-menu ;;
+    esac
+    read -r -a terminal_cmd <<< "${TERMINAL:-alacritty}"
+    if [[ "${terminal_cmd[0]##*/}" == alacritty ]]; then
+        # Keep the title stable even when an editor or shell emits title escapes.
+        terminal_cmd+=(--class "$identity" --title "$identity"
+                       -o window.dynamic_title=false)
+    fi
+    exec "${terminal_cmd[@]}" -e "$0" terminal "$action"
+}
+
+if [[ "$action" == terminal ]]; then
+    action=${2:-}
+    # Keep diagnostics visible instead of closing the terminal on failure.
+    set +e
+    case "$action" in
+        edit:*)
+            case "${action#edit:}" in
+                # $XDG_CURRENT_DESKTOP comes from the session's .X_envars.
+                bindings|settings)
+                    case "${XDG_CURRENT_DESKTOP:-}" in
+                    qtile) file="$config_root/qtile/config.py" ;;
+                    *)
+                        # config.lua is the entrypoint that lists every module.
+                        file="$config_root/oxwm/config.lua"
+                        [[ ${action#edit:} == bindings ]] &&
+                            file="$config_root/oxwm/user/keybindings/default.lua"
+                        ;;
+                    esac
+                    ;;
+                # Monitors (xrandr) and environment live in the X session.
+                session) file="$HOME/.xinitrc" ;;
+                style) file="$source_root/shell/theme.h" ;;
+                *) exit 2 ;;
+            esac
+            if [[ -f "$file" ]]; then
+                read -r -a editor_cmd <<< "${EDITOR:-nvim}"
+                "${editor_cmd[@]}" "$file"
+                exit "$?"
+            fi
+            printf 'Configuration file not found: %s\n' "$file"
+            ;;
+        about)
+            printf 'User: %s\nKernel: ' "$USER"
+            uname -sr
+            if [[ -r /etc/os-release ]]; then
+                . /etc/os-release
+                printf 'OS: %s\n' "$PRETTY_NAME"
+            fi
+            uptime
+            free -h
+            command -v lscpu >/dev/null && lscpu | head -25
+            command -v lspci >/dev/null && lspci | grep -E 'VGA|3D|Display'
+            ;;
+        execute:update)
+            if command -v pacman >/dev/null; then
+                sudo pacman -Syu
+            elif command -v emerge >/dev/null; then
+                sudo emerge --sync && sudo emerge --ask --update --deep --newuse @world
+            elif command -v dnf >/dev/null; then
+                sudo dnf upgrade --refresh
+            elif command -v apt >/dev/null; then
+                sudo apt update && sudo apt upgrade
+            else
+                echo 'No supported package manager found (pacman/emerge/dnf/apt).'
+            fi
+            ;;
+        execute:audio)
+            if command -v dinitctl >/dev/null; then
+                dinitctl -u stop pipewire-pulse &&
+                dinitctl -u stop wireplumber &&
+                dinitctl -u restart pipewire &&
+                dinitctl -u start pipewire-pulse &&
+                dinitctl -u start wireplumber
+            elif command -v systemctl >/dev/null && systemctl --user show-environment >/dev/null 2>&1; then
+                systemctl --user restart pipewire.service wireplumber.service pipewire-pulse.service
+            else
+                echo 'Audio recovery requires dinit or a running systemd user manager.'
+            fi
+            ;;
+        execute:dinit)
+            if command -v dinitctl >/dev/null; then
+                sudo dinitctl restart dinit-user-spawn
+            else
+                echo 'This Fanos recovery action requires dinit.'
+            fi
+            ;;
+        execute:gpu)
+            if command -v dinitctl >/dev/null; then
+                dinitctl -u stop gpu-screen-recorder-ui &&
+                dinitctl -u stop gpu-screen-recorder &&
+                dinitctl -u start gpu-screen-recorder &&
+                dinitctl -u start gpu-screen-recorder-ui
+            else
+                echo 'This Fanos recovery action requires dinit recording services.'
+            fi
+            ;;
+        *) echo "Unknown terminal action: $action" ;;
+    esac
+    printf '\nPress Enter to close… '
+    read -r _ || true
+    exit 0
+fi
+
+case "$action" in
+    url:*)
+        if command -v fanos-launch-webapp >/dev/null; then
+            exec fanos-launch-webapp "${action#url:}"
+        else
+            exec xdg-open "${action#url:}"
+        fi
+        ;;
+    power:lock|power:suspend) exec fanshell-qs-power "${action#power:}" ;;
+    execute:logout|execute:reboot|execute:poweroff)
+        exec fanshell-qs-power "${action#execute:}" ;;
+    about|edit:bindings|edit:settings|edit:session|edit:style|execute:update|execute:audio|execute:dinit|execute:gpu)
+        terminal ;;
+    *) printf 'Unknown menu action: %s\n' "$action" >&2; exit 2 ;;
+esac

@@ -1,0 +1,69 @@
+#!/bin/sh
+# fanshell-qs-bt — Bluetooth control for the panel widget, via bluetoothctl.
+# Emits key=value + tab-separated `device` rows the panel parses.
+#
+#   fanshell-qs-bt status                 one status block
+#   fanshell-qs-bt watch                  status block on a poll interval (\n\n sep)
+#   fanshell-qs-bt power on|off
+#   fanshell-qs-bt scan [seconds]         timed discovery (default 8s), then rescan
+#   fanshell-qs-bt connect|disconnect|pair|remove|trust <MAC>
+set -u
+
+# Every call is bounded: bluetoothctl blocks indefinitely when bluetoothd /
+# D-Bus is wedged, which stalls the watch loop before it ever writes to its
+# pipe — so it never gets SIGPIPE and outlives the shell that spawned it.
+bctl() { timeout 5 bluetoothctl "$@" 2>/dev/null; }
+
+emit_status() {
+	powered=no
+	bctl show | grep -q "Powered: yes" && powered=yes
+	discovering=no
+	bctl show | grep -q "Discovering: yes" && discovering=yes
+
+	printf 'powered=%s\n' "$powered"
+	printf 'discovering=%s\n' "$discovering"
+
+	# All known devices; flag connected/paired via `info`.
+	bctl devices | while read -r _kw mac name; do
+		[ "$_kw" = "Device" ] || continue
+		info=$(bctl info "$mac")
+		conn=0; printf '%s\n' "$info" | grep -q "Connected: yes" && conn=1
+		pair=0; printf '%s\n' "$info" | grep -q "Paired: yes" && pair=1
+		printf 'device\t%s\t%s\t%s\t%s\n' "$mac" "$name" "$conn" "$pair"
+	done
+}
+
+case "${1:-status}" in
+status)
+	emit_status
+	;;
+watch)
+	interval=${2:-4}
+	trap 'trap - TERM HUP INT; kill -TERM 0; exit 0' TERM HUP INT
+	while :; do
+		emit_status
+		printf '\n'
+		sleep "$interval"
+	done
+	;;
+power)
+	bctl power "${2:-on}" >/dev/null
+	emit_status
+	;;
+scan)
+	secs=${2:-8}
+	# timed, non-interactive discovery; results land in `devices` afterwards
+	# (direct call: the scan must outlive bctl's 5s cap)
+	timeout "$((secs + 3))" bluetoothctl --timeout "$secs" scan on >/dev/null 2>&1 || true
+	emit_status
+	;;
+connect | disconnect | pair | remove | trust)
+	[ -n "${2:-}" ] || { printf 'usage: %s %s <MAC>\n' "$0" "$1" >&2; exit 2; }
+	bctl "$1" "$2" >/dev/null 2>&1 || true
+	emit_status
+	;;
+*)
+	printf 'usage: %s [status|watch|power on|off|scan [s]|connect|disconnect|pair|remove|trust <MAC>]\n' "$0" >&2
+	exit 2
+	;;
+esac

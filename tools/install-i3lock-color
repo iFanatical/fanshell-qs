@@ -1,0 +1,52 @@
+#!/bin/sh
+# Build i3lock-color from source and install it into /usr/local, for the
+# themed, blurred lock screen (scripts/fanshell-qs-lock).
+#
+#     tools/install-i3lock-color [TAG]
+#
+# Run it as yourself: it builds in a temporary directory and only uses sudo
+# for the install. Fedora doesn't package i3lock-color; on Gentoo, emerge
+# x11-misc/i3lock-color instead of running this.
+#
+# The binary is installed as /usr/local/bin/i3lock, which comes before
+# Fedora's /usr/bin/i3lock on PATH, so both can stay installed. PAM reads
+# /etc/pam.d/i3lock: when Fedora's i3lock package already provides it, it is
+# left alone, and otherwise one that defers to `login` is installed.
+#
+# Build dependencies (Fedora):
+#     sudo dnf install autoconf automake gcc make pkgconf-pkg-config \
+#         cairo-devel libev-devel libjpeg-turbo-devel libxkbcommon-devel \
+#         libxkbcommon-x11-devel pam-devel xcb-util-devel \
+#         xcb-util-image-devel xcb-util-xrm-devel
+set -eu
+
+tag=${1:-2.13.c.5}
+repo=https://github.com/Raymo111/i3lock-color
+
+if [ "$(id -u)" -eq 0 ]; then
+    printf 'error: run this as your user; it calls sudo for the install\n' >&2
+    exit 1
+fi
+
+work_dir=$(mktemp -d "${TMPDIR:-/tmp}/i3lock-color.XXXXXX")
+trap 'rm -rf -- "$work_dir"' EXIT HUP INT TERM
+
+git clone -q --depth 1 --branch "$tag" "$repo" "$work_dir/src"
+cd "$work_dir/src"
+autoreconf -fi >/dev/null
+mkdir build
+cd build
+# sysconfdir stays out of /etc so `make install` cannot replace the PAM file
+# another package owns; it is handled below.
+../configure -q --prefix=/usr/local --sysconfdir="$work_dir/etc"
+make -s
+
+sudo make -s install
+sudo rm -rf -- "$work_dir/etc"
+if [ ! -e /etc/pam.d/i3lock ]; then
+    printf '%s\n' '# PAM configuration for i3lock-color (tools/install-i3lock-color).' \
+        'auth include login' | sudo tee /etc/pam.d/i3lock >/dev/null
+fi
+sudo install -Dm644 ../LICENSE /usr/local/share/licenses/i3lock-color/LICENSE
+
+printf 'installed i3lock-color %s: %s\n' "$tag" "$(command -v i3lock)"

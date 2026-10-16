@@ -1,0 +1,68 @@
+#!/bin/sh
+# Link the shell's config files in config/ into $HOME. The session itself
+# (.xinitrc, .X_envars, the window manager's config) is linked by the
+# window manager's repo: fanoxwm-qs or fanqtile-qs.
+#
+#   tools/link-config            create or repair the links
+#   tools/link-config --dry-run  show what would change
+#
+# Links point at this checkout, wherever it lives, so the same command sets
+# up any machine. A real file in the way is moved aside to NAME.bak-DATE
+# first; a link that already points here is left alone, so running it again
+# is harmless.
+set -eu
+
+dry_run=0
+case "${1:-}" in
+"") ;;
+-n | --dry-run) dry_run=1 ;;
+*)
+    printf 'usage: %s [--dry-run]\n' "$0" >&2
+    exit 2
+    ;;
+esac
+
+config_dir=$(CDPATH= cd -- "$(dirname -- "$0")/../config" && pwd)
+stamp=$(date +%Y%m%d-%H%M%S)
+
+run() {
+    if [ "$dry_run" = 1 ]; then
+        printf '  would: %s\n' "$*"
+    else
+        "$@"
+    fi
+}
+
+# link SOURCE (in config/) TARGET (in $HOME)
+link() {
+    source="$config_dir/$1"
+    target=$2
+
+    if [ ! -e "$source" ]; then
+        printf 'missing %s, skipped\n' "$source" >&2
+        return
+    fi
+    if [ -L "$target" ] && [ "$(readlink "$target")" = "$source" ]; then
+        printf 'ok      %s\n' "$target"
+        return
+    fi
+
+    run mkdir -p "$(dirname -- "$target")"
+    if [ -L "$target" ]; then
+        printf 'relink  %s (was -> %s)\n' "$target" "$(readlink "$target")"
+        run rm -f "$target"
+    elif [ -e "$target" ]; then
+        printf 'backup  %s -> %s.bak-%s\n' "$target" "$target" "$stamp"
+        run mv "$target" "$target.bak-$stamp"
+    else
+        printf 'link    %s\n' "$target"
+    fi
+    run ln -s "$source" "$target"
+}
+
+link sxhkdrc "${XDG_CONFIG_HOME:-$HOME/.config}/sxhkd/sxhkdrc"
+link picom.conf "${XDG_CONFIG_HOME:-$HOME/.config}/picom/picom.conf"
+# Only this file: the rest of ~/.config/fanshell-qs is state the shell writes
+# (wallpaper.conf, vibrance.conf), which does not belong in the repo.
+link websites.json "${XDG_CONFIG_HOME:-$HOME/.config}/fanshell-qs/websites.json"
+link outputs.defaults.conf "${XDG_CONFIG_HOME:-$HOME/.config}/fanshell-qs/outputs.defaults.conf"

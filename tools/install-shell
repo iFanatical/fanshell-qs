@@ -1,0 +1,129 @@
+#!/bin/sh
+# Build, install and link fanshell-qs, then move a running session onto it.
+#
+#     tools/install-shell [--dry-run]
+#
+# The window-manager repos' install.sh (fanoxwm-qs, fanqtile-qs) call this
+# as their last step; it also works on its own after a `git pull` here. Run
+# it as yourself: the build and the $HOME links stay yours, and only the
+# install into /usr/local and the removal of old files use sudo.
+#
+#   1. check the build dependencies (pkg-config)
+#   2. make, then sudo make install
+#   3. tools/link-config (sxhkdrc, picom.conf, websites.json, ...)
+#   4. in a running X session, replace the running bar with the new build
+#      (also the fanoxwm-qs-shell from before the split) and reload sxhkd
+#   5. remove the shell and scripts fanoxwm-qs installed before the split
+#
+# Safe to run again; each step is skipped or repeated harmlessly.
+set -eu
+
+dry_run=0
+case "${1:-}" in
+"") ;;
+-n | --dry-run) dry_run=1 ;;
+*)
+    printf 'usage: %s [--dry-run]\n' "$0" >&2
+    exit 2
+    ;;
+esac
+
+repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+prefix=${PREFIX:-/usr/local}
+
+step() { printf '\n==> %s\n' "$*"; }
+run() {
+    if [ "$dry_run" = 1 ]; then
+        printf '  would: %s\n' "$*"
+    else
+        "$@"
+    fi
+}
+die() {
+    printf 'error: %s\n' "$*" >&2
+    exit 1
+}
+
+if [ "$(id -u)" -eq 0 ]; then
+    die "run this as your user; it calls sudo for the install"
+fi
+
+step "fanshell-qs: checking build dependencies"
+command -v pkg-config >/dev/null 2>&1 || die "pkg-config is not installed"
+missing=
+for pkg in Qt6Widgets Qt6Gui Qt6Core Qt6DBus Qt6Network libpulse xcb \
+           xcb-randr xcb-dpms xcb-screensaver x11 xcomposite xdamage xfixes; do
+    pkg-config --exists "$pkg" || missing="$missing $pkg"
+done
+if [ -n "$missing" ]; then
+    printf 'missing:%s\n' "$missing" >&2
+    printf 'Fedora:  sudo dnf install qt6-qtbase-devel pulseaudio-libs-devel libxcb-devel \\\n' >&2
+    printf '             libX11-devel libXcomposite-devel libXdamage-devel libXfixes-devel\n' >&2
+    printf 'Gentoo:  see the Requirements section of %s/README.md\n' "$repo" >&2
+    exit 1
+fi
+echo ok
+
+step "fanshell-qs: building"
+run make -C "$repo"
+
+step "fanshell-qs: installing into $prefix/bin"
+run sudo make -C "$repo" install PREFIX="$prefix"
+
+step "fanshell-qs: linking config files"
+run "$repo/tools/link-config"
+
+# Only inside the X session this was run from: a fresh install over SSH or
+# from a console has nothing to move.
+step "fanshell-qs: moving the running session onto the new build"
+uid=$(id -u)
+if [ -z "${DISPLAY:-}" ]; then
+    echo "no \$DISPLAY; nothing running to update"
+else
+    old=0
+    new=0
+    pgrep -u "$uid" -x fanoxwm-qs-shel >/dev/null 2>&1 && old=1
+    pgrep -u "$uid" -x fanshell-qs-she >/dev/null 2>&1 && new=1
+    if [ "$old" = 1 ]; then
+        echo "replacing fanoxwm-qs-shell with fanshell-qs-shell"
+        if [ "$dry_run" = 1 ]; then
+            printf '  would: fanoxwm-qs-shell ipc call shell quit\n'
+            printf '  would: fanshell-qs-shell --no-duplicate &\n'
+        else
+            fanoxwm-qs-shell ipc call shell quit >/dev/null 2>&1 || true
+            for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+                pgrep -u "$uid" -x fanoxwm-qs-shel >/dev/null 2>&1 || break
+                sleep 0.1
+            done
+            setsid -f fanshell-qs-shell --no-duplicate >/dev/null 2>&1
+        fi
+    elif [ "$new" = 1 ]; then
+        echo "restarting fanshell-qs-shell"
+        run fanshell-qs-restart
+    else
+        echo "no bar running; the window manager starts it at login"
+    fi
+    if pgrep -u "$uid" -x sxhkd >/dev/null 2>&1; then
+        echo "reloading sxhkd"
+        run pkill -USR1 -u "$uid" -x sxhkd
+    fi
+fi
+
+# fanoxwm-qs installed the shell and these scripts under its own name before
+# they moved here. fanoxwm-qs-scratch and fanoxwm-qs-workspace are still
+# fanoxwm-qs's and stay.
+step "fanshell-qs: removing the pre-split fanoxwm-qs shell"
+found=
+for name in shell battery bt lock menu-action net outputs power powerdraw \
+            restart sysinfo ups vpn weather; do
+    [ -e "$prefix/bin/fanoxwm-qs-$name" ] && found="$found $prefix/bin/fanoxwm-qs-$name"
+done
+if [ -n "$found" ]; then
+    # shellcheck disable=SC2086
+    run sudo rm -f $found
+    [ "$dry_run" = 1 ] || printf 'removed:%s\n' "$found"
+else
+    echo "none left"
+fi
+
+step "fanshell-qs: done"
