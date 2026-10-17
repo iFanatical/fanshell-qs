@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "oxwmstate.h"
+#include "qtileipc.h"
 #include "qtilestate.h"
 
 namespace {
@@ -78,7 +79,9 @@ QString ewmhName()
 
 /* Which backend to run: $FANSHELL_QS_WM if set, else the running window
  * manager's EWMH name, else $XDG_CURRENT_DESKTOP (set by .X_envars), else
- * oxwm, whose backend keeps retrying until its socket appears. */
+ * qtile when its IPC socket for this display exists (qtile's stock config
+ * calls itself "LG3D"), else oxwm, whose backend keeps retrying until its
+ * socket appears. */
 WmState *createBackend()
 {
     const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
@@ -89,6 +92,8 @@ WmState *createBackend()
         wm = env.value(QStringLiteral("XDG_CURRENT_DESKTOP"));
     wm = wm.toLower();
     if (wm.contains(QLatin1String("qtile")))
+        return new QtileState();
+    if (!wm.contains(QLatin1String("oxwm")) && QtileIpc::available())
         return new QtileState();
     return new OxwmState();
 }

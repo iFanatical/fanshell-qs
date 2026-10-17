@@ -27,7 +27,8 @@ override CXXFLAGS += -std=c++17 -O2 -Wall -fPIC \
                      $(shell pkg-config --cflags $(PKGS))
 override LDLIBS   += $(shell pkg-config --libs $(PKGS))
 
-MODULES  = widgets popup surface procutil wmstate oxwmipc oxwmstate calendar pills \
+MODULES  = widgets popup surface procutil wmstate oxwmipc oxwmstate qtileipc \
+           qtilestate calendar pills \
            panel network bluetooth volume tray traymenu desktopentry \
            launcher ipc clipboard system battery wallpaper notification osd \
            hardwarecontrols powerprofiles media menu xembedtray vibrance displays \

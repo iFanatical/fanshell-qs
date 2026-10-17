@@ -127,6 +127,8 @@ int main(int argc, char *argv[])
     MediaControls *media = MediaControls::instance();
     ipc->handle(QStringLiteral("shell"), QStringLiteral("quit"),
                 []() { QCoreApplication::quit(); });
+    ipc->handle(QStringLiteral("wm"), QStringLiteral("changed"),
+                [state]() { state->wmChanged(); });
     ipc->handle(QStringLiteral("launcher"), QStringLiteral("toggle"),
                 [launcher]() { launcher->toggleMode(QStringLiteral("apps")); });
     ipc->handle(QStringLiteral("launcher"), QStringLiteral("show"),

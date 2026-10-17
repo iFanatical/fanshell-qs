@@ -129,14 +129,15 @@ title, and a few actions. A backend fills it in:
 | backend | window manager | status |
 |---|---|---|
 | `oxwmstate.*` | the patched oxwm from fanoxwm-qs, over its IPC sockets | complete |
-| `qtilestate.h` | qtile | placeholder: no workspaces yet; its header has the plan |
+| `qtilestate.*`, `qtileipc.*` | qtile, over its own IPC socket; hooks in its config send `wm changed` (fanqtile-qs does this) | complete |
 
 At startup the shell picks the backend for the window manager that is
 running: `$FANSHELL_QS_WM` if set, else the name the window manager gives
 EWMH clients (`_NET_WM_NAME` on its `_NET_SUPPORTING_WM_CHECK` window), else
-`$XDG_CURRENT_DESKTOP`, else oxwm. A few other things follow the window
-manager too: logging out uses its own quit, and the Fanos menu's
-configuration entries open its config.
+`$XDG_CURRENT_DESKTOP`, else qtile when its IPC socket for this display
+exists (qtile's stock config calls itself `LG3D`), else oxwm. A few other
+things follow the window manager too: logging out uses its own quit, and the
+Fanos menu's configuration entries open its config.
 
 ## Requirements
 
@@ -396,7 +397,7 @@ counterparts need porting by hand:
 | fanhypr-qs | fanshell-qs |
 |---|---|
 | `hypripc.*` | `oxwmipc.*` |
-| `hyprstate.*` | `wmstate.*` (the window-manager-neutral model every widget uses), with `oxwmstate.*` and `qtilestate.h` as its backends |
+| `hyprstate.*` | `wmstate.*` (the window-manager-neutral model every widget uses), with `oxwmstate.*` and `qtilestate.*` as its backends |
 | `wlutil.*` | `surface.*` |
 | `clipboard.cpp` (`wl-paste`) | `clipboard.cpp` (`QClipboard`) |
 | `wallpaper.cpp` (`awww`) | `wallpaper.cpp` (`feh`) |

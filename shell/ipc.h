@@ -6,6 +6,7 @@
  *   fanshell-qs-shell ipc call notifications toggle-dnd
  *   fanshell-qs-shell ipc call media play-pause|previous|next
  *   fanshell-qs-shell ipc call shell quit
+ *   fanshell-qs-shell ipc call wm changed      (qtile's hooks; see qtilestate.h)
  * A QLocalServer in $XDG_RUNTIME_DIR, keyed by $DISPLAY, readable by its
  * owner only. */
 #ifndef FANSHELL_QS_IPC_H

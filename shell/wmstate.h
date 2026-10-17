@@ -78,6 +78,11 @@ public:
     virtual void toggleWorkspace(int monitorId, int index);
     virtual void cycleLayout(int monitorId);
 
+    /* The window manager reports a change through the shell's own control
+     * socket (`fanshell-qs-shell ipc call wm changed`), for one with no
+     * event stream of its own (qtile). Coalesced like any other change. */
+    void wmChanged() { scheduleRefresh(); }
+
     /* X window ids of the managed windows, and focusing one of them. */
     virtual QVector<quintptr> windows() = 0;
     virtual bool focusWindow(quintptr window) = 0;
