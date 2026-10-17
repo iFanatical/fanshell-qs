@@ -1,9 +1,11 @@
-# ~/.config/sxhkd/sxhkdrc — oxwm session.
+# ~/.config/sxhkd/sxhkdrc — the bar's keys, for every X session (oxwm and
+# qtile alike; fanshell-qs-session starts sxhkd).
 #
 # Mirrors the program, shell and media bindings in ~/.config/hypr/user/
 # keybindings. Window-management bindings (workspaces, focus, layouts,
-# scratchpads) live in ~/.config/oxwm/config.lua; a key can only be grabbed
-# by one of the two.
+# special workspaces) are the window manager's own, in its config
+# (~/.config/oxwm, ~/.config/qtile). A key can only be grabbed by one X
+# client, so none of these may also be bound there.
 
 # programs (user/programs.lua)
 super + Return

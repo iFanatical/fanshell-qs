@@ -18,35 +18,11 @@
 # Safe to run again; each step is skipped or repeated harmlessly.
 set -eu
 
-dry_run=0
-case "${1:-}" in
-"") ;;
--n | --dry-run) dry_run=1 ;;
-*)
-    printf 'usage: %s [--dry-run]\n' "$0" >&2
-    exit 2
-    ;;
-esac
-
 repo=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+. "$repo/tools/lib.sh"
+parse_dry_run "$@"
+require_user
 prefix=${PREFIX:-/usr/local}
-
-step() { printf '\n==> %s\n' "$*"; }
-run() {
-    if [ "$dry_run" = 1 ]; then
-        printf '  would: %s\n' "$*"
-    else
-        "$@"
-    fi
-}
-die() {
-    printf 'error: %s\n' "$*" >&2
-    exit 1
-}
-
-if [ "$(id -u)" -eq 0 ]; then
-    die "run this as your user; it calls sudo for the install"
-fi
 
 step "fanshell-qs: checking build dependencies"
 command -v pkg-config >/dev/null 2>&1 || die "pkg-config is not installed"

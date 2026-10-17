@@ -106,7 +106,7 @@ bar.
 
 - wallpapers in `~/Pictures/wallpapers` (or `wallpaper.dir` in
   [`shell.conf`](#configuration));
-- the Tokyo-Night GTK theme and Tela-circle icons that `xinitrc` sets
+- the Tokyo-Night GTK theme and Tela-circle icons that `fanshell-qs-session` sets
   through `gsettings`;
 - the helper scripts `config/sxhkdrc` calls from `$SCRIPTS`
   (`~/.local/bin`): `screenshot.sh` (Print, Ctrl+Alt+Tab) needs maim,
@@ -197,9 +197,10 @@ out or empty.
 
 ### Session extras
 
-The session repos' `xinitrc` also starts or calls these. None of them are
-needed by the shell, so drop the line from `~/.xinitrc` instead of installing
-something you don't want.
+`fanshell-qs-session` (see [Session](#session)) also starts or calls
+these. None of them are needed by the shell: a daemon that is not installed
+is skipped, and the rest can be dropped from `scripts/fanshell-qs-session`
+instead of installed.
 
 | What | Fedora | Gentoo | For |
 |---|---|---|---|
@@ -267,6 +268,33 @@ Then set up a session from fanoxwm-qs or fanqtile-qs: each starts the shell
 from its window manager's config and links `~/.xinitrc`, `~/.X_envars` and
 the window manager's own config.
 
+### Session
+
+Everything the sessions share lives here, so the two session repos hold only
+what is their window manager's own and cannot drift apart:
+
+- **`fanshell-qs-session WM [ARGS...]`** is the whole X session around the
+  window manager: the environment (`PATH`, `SCRIPTS`, the D-Bus address,
+  XDG user dirs, `XDG_SESSION_TYPE`, `_JAVA_AWT_WM_NONREPARENTING`), then
+  `~/.X_envars` (the session repo's, for what is its window manager's own,
+  such as `XDG_CURRENT_DESKTOP`), the saved output layout, key repeat and
+  per-mouse acceleration, the cursor, the [session
+  daemons](#session-extras) and the GTK theme. Then it execs `WM ARGS...`.
+  Each session repo's `xinitrc` is that one line, `exec fanshell-qs-session
+  qtile start` or `... oxwm`, falling back to the bare window manager when
+  fanshell-qs is not installed.
+- **`tools/lib.sh`** is what the install and link scripts share: `--dry-run`
+  handling, `step`/`run`/`die`, and `link()`, which makes the `$HOME`
+  symlinks (repointing one that points at the other session repo, moving a
+  real file aside to `NAME.bak-DATE`). The session repos' `install.sh` and
+  `tools/link-config` source it from the fanshell-qs checkout beside them
+  (or `$FANSHELL_QS_DIR`).
+- **`config/sxhkdrc`**, the bar's keys, under either window manager.
+
+What stays in each session repo is its window manager's: its config (key
+bindings, rules, layouts, workspaces), how it starts the bar, `X_envars`, and
+the one line of `xinitrc` naming it.
+
 To restart the shell after a rebuild or an environment change, run
 `fanshell-qs-restart`.
 
@@ -297,7 +325,7 @@ cache loses nothing you chose:
 |---|---|
 | `wallpaper.conf` | the picker's last wallpaper and feh mode; re-applied when the shell starts |
 | `vibrance.conf` | digital vibrance per output; re-applied at start and when an output connects |
-| `outputs.conf` | output layouts, one per set of connected outputs; applied from `.xinitrc` and on hotplug |
+| `outputs.conf` | output layouts, one per set of connected outputs; applied at login (`fanshell-qs-session`) and on hotplug |
 | `dpms.conf` | screen blanking and DPMS timeouts; applied at startup |
 | `lock.conf` | lock on idle, before sleep, and the fullscreen pause |
 | `websites.json` | linked from the repo (above) |
@@ -334,7 +362,7 @@ by itself, so a mode the monitor can't show can't strand you. Keeping saves
 it to `outputs.conf`, under the set of outputs connected now
 (`DisplayPort-0+DisplayPort-1`, `eDP-1`, ...). Each machine, and the laptop
 docked or not, finds its own layout, with no hostname or battery test.
-`.xinitrc` runs `fanshell-qs-outputs apply` at login. When the connected set
+`fanshell-qs-session` runs `fanshell-qs-outputs apply` at login. When the connected set
 changes, the shell applies the layout saved for the new set. A set with no
 layout in `outputs.conf` falls back to `outputs.defaults.conf`, linked from
 the repo, which holds the desktop and laptop layouts `monitor-config.sh` used

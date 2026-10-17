@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# fanshell-qs-session — the X session around fanshell-qs, for any window
+# manager.
+#
+#   exec fanshell-qs-session WM [ARGS...]      (the last line of ~/.xinitrc)
+#
+# Sets up everything the sessions share -- the environment, the saved output
+# layout, input, the cursor, the session daemons and the GTK theme -- then
+# replaces itself with WM ARGS..., so the window manager inherits all of it.
+# Each session repo's xinitrc (fanoxwm-qs, fanqtile-qs) is only that one
+# line; what is its window manager's own goes in its ~/.X_envars, which is
+# sourced here, or in the window manager's config. The window manager starts
+# the bar.
+set -u
+
+if [ $# -lt 1 ]; then
+    echo "usage: fanshell-qs-session WM [ARGS...]" >&2
+    exit 2
+fi
+
+# --- environment -----------------------------------------------------------
+
+export SCRIPTS="$HOME/.local/bin"
+export PATH="$HOME/.local/bin:$PATH"
+
+export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+
+if [ -f "$HOME/.config/user-dirs.dirs" ]; then
+    set -a
+    . "$HOME/.config/user-dirs.dirs"
+    set +a
+fi
+
+export XDG_SESSION_TYPE=x11
+# Neither oxwm nor qtile reparents windows; without this Java programs
+# (Minecraft's launcher, JetBrains IDEs) map as blank grey windows.
+export _JAVA_AWT_WM_NONREPARENTING=1
+
+# The window manager's own: XDG_CURRENT_DESKTOP and anything else only it
+# needs, from the session repo that linked it.
+[ -f "$HOME/.X_envars" ] && . "$HOME/.X_envars"
+
+# --- displays and input ----------------------------------------------------
+
+# Output layout saved from the shell's Displays popup (or the defaults in
+# outputs.defaults.conf), before anything maps a window.
+fanshell-qs-outputs apply
+
+xset r rate 200 35
+if command -v xinput >/dev/null 2>&1; then
+    set_accel() {
+        xinput list --name-only | grep -i -- "$1" | while read -r device; do
+            xinput set-prop "pointer:$device" "libinput Accel Speed" "$2" 2>/dev/null
+        done
+    }
+    set_accel "epic mouse" -0.5
+    set_accel "harpe ace" -0.2
+    set_accel "g pro" -0.5
+fi
+
+xsetroot -cursor_name left_ptr
+# Screen blanking and DPMS are set by fanshell-qs-shell from
+# ~/.config/fanshell-qs/dpms.conf (Control Panel > Screen power).
+
+# --- session daemons -------------------------------------------------------
+
+# In the background, if installed; one that is missing is left out rather
+# than failing the session (see Session extras in the README).
+daemon() {
+    command -v "$1" >/dev/null 2>&1 && "$@" &
+}
+
+daemon sxhkd -c "$HOME/.config/sxhkd/sxhkdrc"
+daemon /usr/libexec/polkit-mate-authentication-agent-1
+daemon picom
+daemon xsettingsd
+daemon gsr-ui launch-daemon
+
+# The wallpaper and digital vibrance are restored by fanshell-qs-shell itself,
+# from ~/.config/fanshell-qs, when the window manager starts it.
+
+# --- theme -----------------------------------------------------------------
+
+gsettings set org.gnome.desktop.interface font-name 'JetBrainsMonoNL Nerd Font Propo'
+gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
+gsettings set org.gnome.desktop.interface icon-theme Tela-circle-black-dark
+gsettings set org.gnome.desktop.interface gtk-theme Tokyo-Night
+gsettings set org.gnome.desktop.interface cursor-size 24
+gsettings set org.gtk.Settings.FileChooser sort-directories-first true
+gsettings set org.gtk.gtk4.Settings.FileChooser sort-directories-first true
+
+exec "$@"
