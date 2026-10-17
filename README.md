@@ -107,14 +107,23 @@ bar.
 - wallpapers in `~/Pictures/wallpapers` (or `$FANSHELL_QS_WALLPAPER_DIR`);
 - the Tokyo-Night GTK theme and Tela-circle icons that `xinitrc` sets
   through `gsettings`;
+- the helper scripts `config/sxhkdrc` calls from `$SCRIPTS`
+  (`~/.local/bin`): `screenshot.sh` (Print, Ctrl+Alt+Tab) needs maim,
+  xclip, xdotool and notify-send (Fedora `maim xclip xdotool libnotify`;
+  Gentoo `media-gfx/maim x11-misc/xclip x11-misc/xdotool x11-libs/libnotify`),
+  `xcolorpick.sh` (Alt+C) needs xcolor, which neither distribution packages
+  (`cargo install xcolor`), plus xclip and notify-send, and
+  `alacritty-opacity` (Mod+Shift+-/=);
 - the rest of your dotfiles: `~/.zshrc`, alacritty, nvim;
 - `~/.config/fanshell-qs`, the shell's saved settings (wallpaper,
   vibrance, display layouts, screen power and lock). It starts empty with
   defaults; copy it from another machine to keep the same choices.
 
-**Switching to qtile** later: `sudo dnf install qtile`, then
-`./install.sh` in fanqtile-qs. That points `~/.xinitrc` at qtile and
-reinstalls the shell; `./install.sh` in fanoxwm-qs switches back.
+**Switching to qtile** later: `sudo dnf install qtile` (Gentoo:
+`sudo emerge x11-wm/qtile`), then `./install.sh` in fanqtile-qs, which
+points `~/.xinitrc` at qtile and reinstalls the shell; `./install.sh` in
+fanoxwm-qs switches back. fanqtile-qs's README lists what else the qtile
+side uses.
 
 **On Gentoo**, the steps are the same with the `emerge` lines under
 [Installing](#installing) and in fanoxwm-qs's README, and
