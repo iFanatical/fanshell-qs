@@ -22,7 +22,7 @@ nm_running() { has nmcli && nmcli general status >/dev/null 2>&1; }
 backend() { if nm_running; then echo nm; else echo ip; fi; }
 
 TAB=$(printf '\t')
-BRIDGE_SCRIPT="${FANSHELL_QS_NET_BRIDGE:-/usr/local/bin/net-bridge.sh}"
+BRIDGE_SCRIPT=$(fanshell-qs-conf network.bridge /usr/local/bin/net-bridge.sh)
 
 primary_dev() {
 	ip route show default 2>/dev/null |

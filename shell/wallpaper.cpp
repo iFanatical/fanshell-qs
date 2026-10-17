@@ -10,7 +10,6 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
-#include <QProcessEnvironment>
 #include <QStandardPaths>
 #include <QWheelEvent>
 
@@ -32,11 +31,8 @@ WallpaperPicker *WallpaperPicker::instance()
 
 QString WallpaperPicker::wallpaperDir()
 {
-    const QString env = QProcessEnvironment::systemEnvironment().value(
-        QStringLiteral("FANSHELL_QS_WALLPAPER_DIR"));
-    if (!env.isEmpty())
-        return env;
-    return QDir::homePath() + QStringLiteral("/Pictures/wallpapers");
+    return Paths::setting(QStringLiteral("wallpaper.dir"),
+                          QDir::homePath() + QStringLiteral("/Pictures/wallpapers"));
 }
 
 QString WallpaperPicker::mode()
@@ -44,11 +40,8 @@ QString WallpaperPicker::mode()
     static const QStringList modes{
         QStringLiteral("fill"), QStringLiteral("center"), QStringLiteral("max"),
         QStringLiteral("scale"), QStringLiteral("tile")};
-    const QString env = QProcessEnvironment::systemEnvironment()
-                            .value(QStringLiteral("FANSHELL_QS_WALLPAPER_MODE"))
-                            .trimmed()
-                            .toLower();
-    return modes.contains(env) ? env : QStringLiteral("fill");
+    const QString mode = Paths::setting(QStringLiteral("wallpaper.mode")).toLower();
+    return modes.contains(mode) ? mode : QStringLiteral("fill");
 }
 
 WallpaperPicker::WallpaperPicker(QObject *parent) : QObject(parent)
@@ -239,8 +232,8 @@ void WallpaperPicker::restore()
     const QString path = conf.value(QStringLiteral("path"), current);
     if (path.isEmpty() || !QFileInfo::exists(path))
         return;
-    /* The mode it was set with, so a later env change does not silently
-     * re-crop what is already chosen. */
+    /* The mode it was set with, so a later wallpaper.mode change does not
+     * silently re-crop what is already chosen. */
     QString feMode = conf.value(QStringLiteral("mode"));
     if (feMode.isEmpty())
         feMode = mode();

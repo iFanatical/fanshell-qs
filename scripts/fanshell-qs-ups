@@ -7,11 +7,13 @@
 # enterprise tree reports real measured watts. Verified against an
 # OR1500LCDRM1U: 369 W idle, 520 W with all 24 threads busy.
 #
-# Prints nothing unless $FANSHELL_QS_UPS_HOST is set and answers, so the widget
-# falls back to the CPU+GPU estimate on machines with no UPS.
+# Configured in ~/.config/fanshell-qs/shell.conf (fanshell-qs-conf):
 #
-#   FANSHELL_QS_UPS_HOST        address of the SNMP card (unset = disabled)
-#   FANSHELL_QS_UPS_COMMUNITY   SNMPv1 community (default "public")
+#   ups.host=10.1.0.10      address of the SNMP card (unset = disabled)
+#   ups.community=public    SNMPv1 community (default "public")
+#
+# Prints nothing unless a host is set and answers, so the widget falls back
+# to the CPU+GPU estimate on machines with no UPS.
 #
 # Remember the card's own access control: it silently ignores any manager
 # whose source address is not in its NMS list, which looks exactly like a
@@ -20,9 +22,9 @@
 # machine".
 set -eu
 
-HOST="${FANSHELL_QS_UPS_HOST:-}"
+HOST=$(fanshell-qs-conf ups.host)
 [ -n "$HOST" ] || exit 0
-COMMUNITY="${FANSHELL_QS_UPS_COMMUNITY:-public}"
+COMMUNITY=$(fanshell-qs-conf ups.community public)
 
 command -v snmpget >/dev/null 2>&1 || exit 0
 

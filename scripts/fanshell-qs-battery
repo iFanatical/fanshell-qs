@@ -4,7 +4,7 @@
 # Time remaining is computed from the kernel's own energy/charge + power/current
 # rate attributes (whichever the driver exposes) -- no upower dependency. On a
 # multi-battery machine (or to point this at a fake power_supply dir for
-# testing), override with $FANSHELL_QS_BATTERY_PATH.
+# testing), set battery.path in shell.conf.
 set -eu
 
 # A sysfs attribute can exist as a file and still fail to read: a driver that
@@ -18,7 +18,7 @@ read_attr() {
 	cat "$1" 2>/dev/null || true
 }
 
-BAT="${FANSHELL_QS_BATTERY_PATH:-$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -1)}"
+BAT=$(fanshell-qs-conf battery.path "$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -1)")
 [ -n "$BAT" ] || exit 0
 cap=$(read_attr "$BAT/capacity")
 st=$(read_attr "$BAT/status")

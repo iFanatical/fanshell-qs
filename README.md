@@ -104,7 +104,8 @@ bar.
 
 **Not in these repos**, but the session expects them:
 
-- wallpapers in `~/Pictures/wallpapers` (or `$FANSHELL_QS_WALLPAPER_DIR`);
+- wallpapers in `~/Pictures/wallpapers` (or `wallpaper.dir` in
+  [`shell.conf`](#configuration));
 - the Tokyo-Night GTK theme and Tela-circle icons that `xinitrc` sets
   through `gsettings`;
 - the helper scripts `config/sxhkdrc` calls from `$SCRIPTS`
@@ -187,7 +188,7 @@ out or empty.
 | ddcutil | `ddcutil` | `app-misc/ddcutil` | external monitor brightness over DDC/CI (needs the `i2c-dev` module and access to `/dev/i2c-*`) |
 | power-profiles-daemon | `power-profiles-daemon` | `sys-power/power-profiles-daemon` | the System dropdown's power-profile selector |
 | wireguard-tools | `wireguard-tools` | `net-vpn/wireguard-tools` | the VPN pill; `wg-quick` runs through passwordless `sudo -n` |
-| net-snmp | `net-snmp-utils` | `net-analyzer/net-snmp` | UPS wattage in the power pill, when `FANSHELL_QS_UPS_HOST` is set |
+| net-snmp | `net-snmp-utils` | `net-analyzer/net-snmp` | UPS wattage in the power pill, when `ups.host` is set (see [UPS](#ups)) |
 | curl | `curl` | `net-misc/curl` | the weather pill (wttr.in) |
 | pw-play or paplay | `pipewire-utils` or `pulseaudio-utils` | `media-video/pipewire` | the optional volume-change sound |
 | i3lock-color | `tools/install-i3lock-color` (not packaged) | `x11-misc/i3lock-color` | the themed, blurred lock screen (`fanshell-qs-lock`), for the Lock button, lock on idle and lock before sleep. Stock `i3lock` gives a plain Tokyo Night background instead; without either, xsecurelock, slock, xscreensaver and then `loginctl lock-session` are tried |
@@ -416,23 +417,53 @@ Update the commit in this README when you do.
 
 ## Configuration
 
-Everything visual lives in `shell/theme.h`. Runtime overrides come from the
-shell's environment, which it inherits from the window manager, so set them
-in `.xinitrc` before it starts the window manager.
+Everything visual lives in `shell/theme.h`. Settings live in
+`~/.config/fanshell-qs/shell.conf`, a hand-edited `KEY=VALUE` file (`#`
+comments; a value starting with `~/` is under your home). It belongs to the
+shell, so it is the same under oxwm and qtile, and the session repos set
+none of it. Every key is optional; a missing file means all defaults. The
+shell reads it at startup (restart it with Mod+Shift+P after an edit); the
+scripts (through `fanshell-qs-conf`) read it each time they run.
 
-| variable | effect |
+```ini
+# ~/.config/fanshell-qs/shell.conf
+vpn.tunnels=1
+wallpaper.dir=~/Pictures/wallpapers
+wallpaper.mode=fill
+weather.unit=F
+ups.host=10.1.0.10
+ups.community=public
+```
+
+| key | effect |
 |---|---|
-| `FANSHELL_QS_WM` | the backend to run, `oxwm` or `qtile`, instead of detecting it |
-| `FANSHELL_TUN_COUNT` | number of sequential WireGuard tunnels (`tun1`…`tunN`; default `1`, maximum `32`) |
-| `FANSHELL_QS_BATTERY_PATH` | battery `power_supply` dir (multi-battery machines) |
-| `FANSHELL_QS_WEATHER_UNIT` | `C` for Celsius, default Fahrenheit |
-| `FANSHELL_QS_NET_BRIDGE` | path to `net-bridge.sh` for the non-NetworkManager backend |
-| `FANSHELL_QS_WALLPAPER_DIR` | wallpaper directory (default `~/Pictures/wallpapers`) |
-| `FANSHELL_QS_WALLPAPER_MODE` | feh mode: `fill` (default), `center`, `max`, `scale`, `tile` |
-| `FANSHELL_QS_POWER_WINDOW` | RAPL sample window in seconds (default `0.5`) |
-| `FANSHELL_QS_POWERCAP_DIR` | powercap root (default `/sys/class/powercap`) |
-| `FANSHELL_QS_UPS_HOST` | SNMP card address; unset disables UPS polling |
-| `FANSHELL_QS_UPS_COMMUNITY` | SNMPv1 community (default `public`) |
+| `vpn.tunnels` | number of sequential WireGuard tunnels (`tun1`…`tunN`; default `1`, maximum `32`) |
+| `wallpaper.dir` | wallpaper directory (default `~/Pictures/wallpapers`) |
+| `wallpaper.mode` | feh mode for a new pick: `fill` (default), `center`, `max`, `scale`, `tile`; the current wallpaper keeps the mode it was set with |
+| `weather.unit` | `C` for Celsius, default Fahrenheit |
+| `ups.host` | the UPS's SNMP card; unset, the power pill shows the CPU+GPU estimate instead (see [UPS](#ups)) |
+| `ups.community` | SNMPv1 community (default `public`) |
+| `battery.path` | battery `power_supply` dir (multi-battery machines) |
+| `network.bridge` | path to `net-bridge.sh` for the non-NetworkManager backend (default `/usr/local/bin/net-bridge.sh`) |
+| `power.window` | RAPL sample window in seconds (default `0.5`) |
+| `power.powercap_dir` | powercap root (default `/sys/class/powercap`) |
+| `menu.source_dir` | this checkout, for the menu's entries that open its files (default `~/projects/window-managers/fanshell-qs`) |
+
+The other files in `~/.config/fanshell-qs` (`wallpaper.conf`,
+`vibrance.conf`, `outputs.conf`, `dpms.conf`, `lock.conf`) are written by
+the shell's popups; edit those settings there.
+
+One environment variable remains, because it is about the window manager
+rather than the shell: `FANSHELL_QS_WM`, the backend to run (`oxwm` or
+`qtile`) instead of detecting it.
+
+### UPS
+
+With `ups.host` set, the power pill shows the UPS's measured wall draw.
+`fanshell-qs-ups` speaks CyberPower's enterprise MIB (RMCARD205 and similar)
+and needs `snmpget` from net-snmp. The card answers only managers in its NMS
+list, which looks exactly like a timeout otherwise; the source address is
+the one `ip route get <host>` picks.
 
 Power draw, the UPS, RAPL permissions (`tools/install-rapl-udev.sh`) and the
 `websites.json` menu work exactly as in fanhypr-qs; see its README.

@@ -4,7 +4,7 @@ set -euo pipefail
 
 action=${1:-}
 config_root=${XDG_CONFIG_HOME:-$HOME/.config}
-source_root=${FANSHELL_QS_SOURCE_DIR:-$HOME/projects/window-managers/fanshell-qs}
+source_root=$(fanshell-qs-conf menu.source_dir "$HOME/projects/window-managers/fanshell-qs")
 
 terminal() {
     local -a terminal_cmd

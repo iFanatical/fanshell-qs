@@ -40,11 +40,11 @@ class WallpaperPicker : public QObject {
 public:
     static WallpaperPicker *instance();
 
-    /* Directory scanned for wallpapers; $FANSHELL_QS_WALLPAPER_DIR overrides
-     * the default of ~/Pictures/wallpapers. */
+    /* Directory scanned for wallpapers: wallpaper.dir in shell.conf, else
+     * ~/Pictures/wallpapers. */
     static QString wallpaperDir();
-    /* feh --bg-<mode>: fill (default), center, max, scale or tile;
-     * $FANSHELL_QS_WALLPAPER_MODE overrides. */
+    /* feh --bg-<mode> for a new pick: wallpaper.mode in shell.conf, one of
+     * fill (default), center, max, scale or tile. */
     static QString mode();
 
     QVector<Wallpaper> entries;

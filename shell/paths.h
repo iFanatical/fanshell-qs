@@ -7,6 +7,9 @@
  *   outputs.conf     output layouts, written via fanshell-qs-outputs
  *   dpms.conf        screen blanking and DPMS, applied at startup
  *   lock.conf        lock on idle and before sleep
+ *   shell.conf       hand-edited settings (VPN tunnels, wallpaper directory
+ *                    and default mode, UPS, ...): setting() here, and
+ *                    scripts/fanshell-qs-conf for the scripts
  *   websites.json    the menu's Websites page (hand-edited)
  *   sounds/          optional volume-change sound
  *
@@ -52,6 +55,19 @@ inline QHash<QString, QString> readConf(const QString &name)
         out.insert(line.left(eq).trimmed(), line.mid(eq + 1).trimmed());
     }
     return out;
+}
+
+/* One key from shell.conf, the hand-edited settings, or `fallback` when it
+ * is missing or empty. A value starting with "~/" is taken from $HOME.
+ * scripts/fanshell-qs-conf reads the same file the same way. */
+inline QString setting(const QString &key, const QString &fallback = QString())
+{
+    QString value = readConf(QStringLiteral("shell.conf")).value(key);
+    if (value.isEmpty())
+        return fallback;
+    if (value.startsWith(QLatin1String("~/")))
+        value = QDir::homePath() + value.mid(1);
+    return value;
 }
 
 /* Replaces the file atomically, so a crash mid-write cannot leave it empty.

@@ -64,7 +64,7 @@ public:
     bool cpuLocked = false;
     bool any() const { return cpu >= 0 || gpu >= 0; }
 
-    /* UPS, when $FANSHELL_QS_UPS_HOST is set and the card answers. Measured at
+    /* UPS, when ups.host is set in shell.conf and the card answers. Measured at
      * the outlet, so unlike cpu+gpu it is real wall power -- and it covers
      * everything on the UPS, not just this machine. */
     bool upsPresent = false;

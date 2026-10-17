@@ -45,8 +45,8 @@ private:
     QPointer<QScreen> m_screen;
 };
 
-/* Sequential WireGuard tunnel state (fanshell-qs-vpn). FANSHELL_TUN_COUNT
- * exposes tun1..tunN (default one). No polling: status is read once at startup
+/* Sequential WireGuard tunnel state (fanshell-qs-vpn). vpn.tunnels in
+ * shell.conf exposes tun1..tunN (default one). No polling: status is read once at startup
  * and refreshed after a selection. */
 class VpnState : public QObject {
     Q_OBJECT

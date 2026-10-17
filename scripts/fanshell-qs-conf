@@ -1,0 +1,34 @@
+#!/bin/sh
+# fanshell-qs-conf — one setting from ~/.config/fanshell-qs/shell.conf.
+#
+#   fanshell-qs-conf KEY [DEFAULT]
+#
+# Prints KEY's value, or DEFAULT when the file or the key is missing or
+# empty. shell.conf is the shell's hand-edited settings, the same under any
+# window manager; the format is the shell's other .conf files' (Paths::
+# readConf in shell/paths.h): KEY=VALUE lines, '#' comments, spaces around
+# '=' allowed, the last line for a key wins. A value starting with "~/" is
+# taken from $HOME. See README.md, Configuration, for the keys.
+set -eu
+
+[ $# -ge 1 ] || {
+	echo "usage: fanshell-qs-conf KEY [DEFAULT]" >&2
+	exit 2
+}
+key=$1
+default=${2:-}
+conf="${XDG_CONFIG_HOME:-$HOME/.config}/fanshell-qs/shell.conf"
+
+value=
+if [ -r "$conf" ]; then
+	# Keys are dotted words; escape the dots for sed.
+	pattern=$(printf '%s' "$key" | sed 's/[.]/\\./g')
+	value=$(sed -n "s/^[[:space:]]*$pattern[[:space:]]*=[[:space:]]*//p" "$conf" |
+		tail -n 1 | sed 's/[[:space:]]*$//')
+fi
+[ -n "$value" ] || value=$default
+
+case "$value" in
+"~/"*) value="$HOME/${value#"~/"}" ;;
+esac
+printf '%s\n' "$value"

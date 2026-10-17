@@ -3,6 +3,7 @@
 #include "wmstate.h"
 #include "notification.h"
 #include "osd.h"
+#include "paths.h"
 
 #include <QPainter>
 #include <QTimer>
@@ -99,7 +100,7 @@ VpnState *VpnState::instance()
 VpnState::VpnState(QObject *parent) : QObject(parent)
 {
     bool countOk = false;
-    int count = qEnvironmentVariableIntValue("FANSHELL_TUN_COUNT", &countOk);
+    int count = Paths::setting(QStringLiteral("vpn.tunnels")).toInt(&countOk);
     if (!countOk || count < 1)
         count = 1;
     count = qMin(count, 32);

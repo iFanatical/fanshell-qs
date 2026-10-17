@@ -1,10 +1,10 @@
 #!/bin/sh
 # fanshell-qs-vpn — WireGuard tunnel control for the panel's VPN widget.
-# Controls tun1..tunN as exposed by FANSHELL_TUN_COUNT (default one). wg-quick
+# Controls tun1..tunN, N being vpn.tunnels in shell.conf (default one). wg-quick
 # needs root; we use sudo -n (passwordless) when not already root.
 set -eu
 
-TUN_COUNT="${FANSHELL_TUN_COUNT:-1}"
+TUN_COUNT=$(fanshell-qs-conf vpn.tunnels 1)
 case "$TUN_COUNT" in
 ''|*[!0-9]*|???*) TUN_COUNT=1 ;;
 esac

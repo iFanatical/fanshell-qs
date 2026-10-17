@@ -18,12 +18,14 @@
 # something called "total" would invite reading it as wall power, which it is
 # not. It excludes RAM, drives, fans, VRM losses and PSU inefficiency.
 #
-# Sample window in seconds; longer is steadier but slower to react.
 set -eu
 
-WINDOW="${FANSHELL_QS_POWER_WINDOW:-0.5}"
-# Override the powercap root (multi-socket boxes, or a fake tree for testing).
-POWERCAP="${FANSHELL_QS_POWERCAP_DIR:-/sys/class/powercap}"
+# Sample window in seconds (power.window in shell.conf); longer is steadier
+# but slower to react.
+WINDOW=$(fanshell-qs-conf power.window 0.5)
+# The powercap root (power.powercap_dir; multi-socket boxes, or a fake tree
+# for testing).
+POWERCAP=$(fanshell-qs-conf power.powercap_dir /sys/class/powercap)
 
 read_attr() {
 	cat "$1" 2>/dev/null || true
