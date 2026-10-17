@@ -22,6 +22,7 @@ struct Entry {
     QPointer<QScreen> screen;
     Surface::SurfaceSpec spec;
     QPoint origin;            /* output-local top-left we placed it at */
+    int corrections = 0;      /* keepDockInPlace() moves since it last fit */
     xcb_window_t prevFocus = XCB_NONE;
     bool grabbed = false;
     int grabTries = 0;
@@ -306,6 +307,38 @@ void onHidden(QWidget *w)
     xcb_flush(c);
 }
 
+/* Some window managers move a dock after mapping it: qtile 0.37 attaches it
+ * to the focused screen and adds that screen's offset to the dock's already
+ * absolute position, so with the focused monitor at x=1920 the panels land
+ * one screen to the right and one ends up off the desktop. Put the dock back
+ * where applyGeometry() placed it. This goes straight to X, not through
+ * QWidget::move(), whose cached geometry may already read as right; the WM
+ * honours a dock's ConfigureRequest (qtile does, for a dock attached without
+ * a fixed position). Bounded, so a WM that insists on its own placement
+ * cannot start a configure loop; a no-op where the WM leaves docks alone
+ * (oxwm). */
+void keepDockInPlace(QWidget *w)
+{
+    auto it = g_entries.find(w);
+    if (it == g_entries.end() || !isDock(it->spec) || !it->screen
+            || !w->isVisible())
+        return;
+    const QPoint want = it->screen->geometry().topLeft() + it->origin;
+    if (w->pos() == want) {
+        it->corrections = 0;
+        return;
+    }
+    if (it->corrections >= 3)
+        return;
+    ++it->corrections;
+    const qreal dpr = it->screen->devicePixelRatio();
+    const uint32_t xy[] = {uint32_t(qRound(want.x() * dpr)),
+                           uint32_t(qRound(want.y() * dpr))};
+    xcb_configure_window(conn(), xcb_window_t(w->winId()),
+                         XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y, xy);
+    xcb_flush(conn());
+}
+
 class ShowWatcher : public QObject {
 public:
     using QObject::QObject;
@@ -318,8 +351,17 @@ protected:
             /* QEvent::Show precedes the map; raise and focus after it. */
             QPointer<QWidget> guard(w);
             QTimer::singleShot(0, w, [guard]() {
-                if (guard && guard->isVisible())
+                if (guard && guard->isVisible()) {
                     onShown(guard);
+                    keepDockInPlace(guard);
+                }
+            });
+        } else if (e->type() == QEvent::Move) {
+            /* After the event: the WM's move is what Qt is reporting. */
+            QPointer<QWidget> guard(w);
+            QTimer::singleShot(0, w, [guard]() {
+                if (guard)
+                    keepDockInPlace(guard);
             });
         } else if (e->type() == QEvent::Hide) {
             onHidden(w);
