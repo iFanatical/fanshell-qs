@@ -31,6 +31,95 @@ in one repo, and from fanhypr-qs `9ea1f08` before that.
 └── oxwm/                     upstream oxwm, read by fanoxwm-qs's build
 ```
 
+## New machine
+
+Everything from a fresh install to a running session, on Fedora. The
+session repos' `install.sh` does all the building, installing and linking;
+what it can't do is install packages, so that comes first.
+
+**1. Packages.** The install scripts check for these and stop with a hint
+if one is missing, but never install them. The first three lines (the
+shell and oxwm build) and `xorg…` through `sxhkd` are required; the rest
+are the optional features listed under [Requirements](#requirements).
+
+```sh
+sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config \
+    qt6-qtbase-devel libxcb-devel libX11-devel libXcomposite-devel \
+    libXdamage-devel libXfixes-devel pulseaudio-libs-devel \
+    zig libXft-devel libXinerama-devel fontconfig-devel \
+    xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd \
+    jq xdotool xprop feh NetworkManager bluez upower brightnessctl \
+    ddcutil power-profiles-daemon wireguard-tools net-snmp-utils curl \
+    pipewire-utils alacritty xdg-utils xset xinput xsetroot xsettingsd \
+    mate-polkit
+```
+
+oxwm needs Zig 0.16.0, which is what Fedora 44 ships; an older release's
+`zig` is too old, and `make oxwm` says so.
+
+**2. Font.** JetBrainsMono Nerd Font from
+[nerdfonts.com](https://www.nerdfonts.com) into `~/.local/share/fonts`,
+then `fc-cache -f`. Fedora doesn't package it, and the bar's icons come
+from it.
+
+**3. Clone side by side.** The install scripts expect these names next to
+each other (or `$FANSHELL_QS_DIR` and `$OXWM_SOURCE_DIR`):
+
+```sh
+mkdir -p ~/projects/window-managers && cd ~/projects/window-managers
+git clone git@github.com:iFanatical/fanshell-qs.git
+git clone git@github.com:iFanatical/fanoxwm-qs.git
+git clone git@github.com:iFanatical/fanqtile-qs.git     # for qtile, later
+git clone https://github.com/tonybanters/oxwm.git
+git -C oxwm checkout 472c767     # the commit hooks.patch was last built against
+```
+
+The `git@github.com:` URLs need an SSH key on GitHub. oxwm is pinned
+because upstream can move code next to the patched lines, which stops
+`make oxwm` with "hooks.patch no longer applies"; to move to a newer oxwm,
+check out `main` and refresh `oxwm-ipc/hooks.patch` in fanoxwm-qs if needed.
+
+**4. Build and install.** As yourself, not root; it asks for sudo only to
+install:
+
+```sh
+cd ~/projects/window-managers/fanoxwm-qs
+./install.sh --dry-run    # lists every step first
+./install.sh
+```
+
+It builds patched oxwm (the first build downloads Lua through Zig, so it
+needs the network) and `oxwmctl`, installs them and the oxwm scripts into
+`/usr/local/bin`, links `~/.xinitrc`, `~/.X_envars` and `~/.config/oxwm`,
+then builds, installs and links the shell. A real file in the way of a link
+is moved to `NAME.bak-DATE`, never overwritten.
+
+Optional, from this repo's `tools/`: `install-i3lock-color` for the themed
+lock screen (its header lists the packages it needs to build; without it
+the lock screen is a plain colour), and `sudo ./install-rapl-udev.sh` for
+CPU wattage in the power pill.
+
+**5. Log in.** `startx` from a text console starts oxwm, which starts the
+bar.
+
+**Not in these repos**, but the session expects them:
+
+- wallpapers in `~/Pictures/wallpapers` (or `$FANSHELL_QS_WALLPAPER_DIR`);
+- the Tokyo-Night GTK theme and Tela-circle icons that `xinitrc` sets
+  through `gsettings`;
+- the rest of your dotfiles: `~/.zshrc`, alacritty, nvim;
+- `~/.config/fanshell-qs`, the shell's saved settings (wallpaper,
+  vibrance, display layouts, screen power and lock). It starts empty with
+  defaults; copy it from another machine to keep the same choices.
+
+**Switching to qtile** later: `sudo dnf install qtile`, then
+`./install.sh` in fanqtile-qs. That points `~/.xinitrc` at qtile and
+reinstalls the shell; `./install.sh` in fanoxwm-qs switches back.
+
+**On Gentoo**, the steps are the same with the `emerge` lines under
+[Installing](#installing) and in fanoxwm-qs's README, and
+`x11-misc/i3lock-color` from portage instead of `install-i3lock-color`.
+
 ## Window managers
 
 The shell talks to the window manager only through `WmState`
