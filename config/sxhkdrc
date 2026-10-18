@@ -26,13 +26,6 @@ super + p
 super + shift + p
 	fanshell-qs-restart
 
-# terminal opacity (super + shift + minus / equal)
-super + shift + underscore
-	$SCRIPTS/alacritty-opacity --opacdown
-
-super + shift + plus
-	$SCRIPTS/alacritty-opacity --opacup
-
 # color picker (hyprpicker)
 alt + c
 	$SCRIPTS/xcolorpick.sh
