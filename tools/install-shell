@@ -10,7 +10,7 @@
 #
 #   1. check the build dependencies (pkg-config)
 #   2. make, then sudo make install
-#   3. tools/link-config (sxhkdrc, picom.conf, websites.json, ...)
+#   3. tools/link-config (sxhkdrc, picom.conf, alacritty.toml, ...)
 #   4. in a running X session, replace the running bar with the new build
 #      (also the fanoxwm-qs-shell from before the split) and reload sxhkd
 #   5. remove the shell and scripts fanoxwm-qs installed before the split

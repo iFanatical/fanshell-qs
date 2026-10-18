@@ -25,7 +25,7 @@ in one repo, and from fanhypr-qs `9ea1f08` before that.
 │   ├── shell/                the Qt shell
 │   ├── scripts/fanshell-qs-* helper scripts the widgets exec
 │   ├── tools/                link-config, i3lock-color and RAPL installers
-│   └── config/               sxhkdrc, picom.conf, websites.json, output defaults
+│   └── config/               sxhkdrc, picom.conf, alacritty.toml, websites.json, output defaults
 ├── fanoxwm-qs/               the oxwm session
 ├── fanqtile-qs/              the qtile session
 └── oxwm/                     upstream oxwm, read by fanoxwm-qs's build
@@ -115,7 +115,7 @@ bar.
   `xcolorpick.sh` (Alt+C) needs xcolor, which neither distribution packages
   (`cargo install xcolor`), plus xclip and notify-send, and
   `alacritty-opacity` (Mod+Shift+-/=);
-- the rest of your dotfiles: `~/.zshrc`, alacritty, nvim;
+- the rest of your dotfiles: `~/.zshrc`, nvim;
 - `~/.config/fanshell-qs`, the shell's saved settings (wallpaper,
   vibrance, display layouts, screen power and lock). It starts empty with
   defaults; copy it from another machine to keep the same choices.
@@ -308,6 +308,7 @@ moved to `NAME.bak-DATE` first, and `--dry-run` shows what would change:
 |---|---|
 | `config/sxhkdrc` | `~/.config/sxhkd/sxhkdrc` (program, popup and media keys; the same under both window managers) |
 | `config/picom.conf` | `~/.config/picom/picom.conf` |
+| `config/alacritty.toml` | `~/.config/alacritty/alacritty.toml` (the terminal sxhkd and the window managers open) |
 | `config/websites.json` | `~/.config/fanshell-qs/websites.json` (the menu's Websites page) |
 | `config/outputs.defaults.conf` | `~/.config/fanshell-qs/outputs.defaults.conf` (fallback output layouts) |
 

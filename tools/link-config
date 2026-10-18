@@ -21,6 +21,7 @@ config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 
 link "$config_dir/sxhkdrc" "$config_home/sxhkd/sxhkdrc"
 link "$config_dir/picom.conf" "$config_home/picom/picom.conf"
+link "$config_dir/alacritty.toml" "$config_home/alacritty/alacritty.toml"
 # Only this file: the rest of ~/.config/fanshell-qs is state the shell writes
 # (wallpaper.conf, vibrance.conf), which does not belong in the repo.
 link "$config_dir/websites.json" "$config_home/fanshell-qs/websites.json"
