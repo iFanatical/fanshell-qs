@@ -48,7 +48,7 @@ sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config \
     libXdamage-devel libXfixes-devel pulseaudio-libs-devel \
     zig libXft-devel libXinerama-devel fontconfig-devel \
     xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd \
-    jq xdotool xprop feh NetworkManager bluez upower brightnessctl \
+    jq xdotool xprop feh NetworkManager bluez brightnessctl \
     ddcutil power-profiles-daemon wireguard-tools net-snmp-utils curl \
     pipewire-utils alacritty xdg-utils xset xinput xsetroot xsettingsd \
     mate-polkit
@@ -112,9 +112,8 @@ bar.
   (`~/.local/bin`): `screenshot.sh` (Print, Ctrl+Alt+Tab) needs maim,
   xclip, xdotool and notify-send (Fedora `maim xclip xdotool libnotify`;
   Gentoo `media-gfx/maim x11-misc/xclip x11-misc/xdotool x11-libs/libnotify`),
-  `xcolorpick.sh` (Alt+C) needs xcolor, which neither distribution packages
-  (`cargo install xcolor`), plus xclip and notify-send, and
-  `alacritty-opacity` (Mod+Shift+-/=);
+  and `xcolorpick.sh` (Alt+C) needs xcolor, which neither distribution packages
+  (`cargo install xcolor`), plus xclip and notify-send;
 - the rest of your dotfiles: `~/.zshrc`, nvim;
 - `~/.config/fanshell-qs`, the shell's saved settings (wallpaper,
   vibrance, display layouts, screen power and lock). It starts empty with
@@ -183,7 +182,6 @@ out or empty.
 | feh | `feh` | `media-gfx/feh` | setting the wallpaper from the picker, and restoring it at startup |
 | NetworkManager | `NetworkManager` | `net-misc/networkmanager` | the network pill and Wi-Fi list (`nmcli`) |
 | BlueZ | `bluez` | `net-wireless/bluez` | the Bluetooth popup (`bluetoothctl`) |
-| UPower | `upower` | `sys-power/upower` | the battery pill |
 | brightnessctl | `brightnessctl` | `app-misc/brightnessctl` | laptop screen and keyboard backlight |
 | ddcutil | `ddcutil` | `app-misc/ddcutil` | external monitor brightness over DDC/CI (needs the `i2c-dev` module and access to `/dev/i2c-*`) |
 | power-profiles-daemon | `power-profiles-daemon` | `sys-power/power-profiles-daemon` | the System dropdown's power-profile selector |
@@ -235,7 +233,7 @@ Optional, everything above:
 
 ```sh
 # Fedora
-sudo dnf install feh NetworkManager bluez upower \
+sudo dnf install feh NetworkManager bluez \
     brightnessctl ddcutil power-profiles-daemon wireguard-tools \
     net-snmp-utils curl pipewire-utils alacritty xdg-utils \
     xset xinput xsetroot xsettingsd mate-polkit
@@ -243,7 +241,7 @@ tools/install-i3lock-color   # builds it; needs the deps listed in its header
 
 # Gentoo
 sudo emerge media-gfx/feh \
-    net-misc/networkmanager net-wireless/bluez sys-power/upower \
+    net-misc/networkmanager net-wireless/bluez \
     app-misc/brightnessctl app-misc/ddcutil sys-power/power-profiles-daemon \
     net-vpn/wireguard-tools net-analyzer/net-snmp net-misc/curl \
     media-video/pipewire x11-terms/alacritty \
@@ -472,7 +470,7 @@ ups.community=public
 | `weather.unit` | `C` for Celsius, default Fahrenheit |
 | `ups.host` | the UPS's SNMP card; unset, the power pill shows the CPU+GPU estimate instead (see [UPS](#ups)) |
 | `ups.community` | SNMPv1 community (default `public`) |
-| `battery.path` | battery `power_supply` dir (multi-battery machines) |
+| `battery.path` | the battery `power_supply` dir(s) to read, space-separated; default every `BAT*` that reports a charge, combined |
 | `network.bridge` | path to `net-bridge.sh` for the non-NetworkManager backend (default `/usr/local/bin/net-bridge.sh`) |
 | `power.window` | RAPL sample window in seconds (default `0.5`) |
 | `power.powercap_dir` | powercap root (default `/sys/class/powercap`) |

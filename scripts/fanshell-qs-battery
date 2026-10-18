@@ -2,9 +2,15 @@
 # fanshell-qs-battery — battery level/status/icon for the Battery widget.
 # Prints nothing on a machine with no battery, so the widget hides itself.
 # Time remaining is computed from the kernel's own energy/charge + power/current
-# rate attributes (whichever the driver exposes) -- no upower dependency. On a
-# multi-battery machine (or to point this at a fake power_supply dir for
-# testing), set battery.path in shell.conf.
+# rate attributes (whichever the driver exposes) -- no upower dependency.
+#
+# Every BAT* that reports a capacity counts, combined into one figure the way
+# upower's display device does: a ThinkPad with an internal and a removable
+# battery shows their total charge. A battery that lists itself but reports
+# no capacity (a dead or disconnected internal one, which a T570 shows as
+# BAT0 with every value zero) is left out rather than hiding the pill. To
+# read one battery only (or a fake power_supply dir, for testing), set
+# battery.path in shell.conf.
 set -eu
 
 # A sysfs attribute can exist as a file and still fail to read: a driver that
@@ -18,12 +24,63 @@ read_attr() {
 	cat "$1" 2>/dev/null || true
 }
 
-BAT=$(fanshell-qs-conf battery.path "$(ls -d /sys/class/power_supply/BAT* 2>/dev/null | head -1)")
-[ -n "$BAT" ] || exit 0
-cap=$(read_attr "$BAT/capacity")
-st=$(read_attr "$BAT/status")
-[ -n "$cap" ] || exit 0
-[ -n "$st" ] || st="Unknown"
+bats=$(fanshell-qs-conf battery.path)
+[ -n "$bats" ] || bats=$(ls -d /sys/class/power_supply/BAT* 2>/dev/null || true)
+
+# Sums over the batteries that report a capacity. Prefer the energy_* set,
+# fall back to charge_*, selected on whether the values actually read back,
+# not on whether the files exist -- see read_attr. sum_now/sum_full are used
+# only if every counted battery gave both.
+count=0 cap_total=0 sum_now=0 sum_full=0 sum_rate=0 sums=1
+charging=0 discharging=0 full_count=0 first_st=
+for BAT in $bats; do
+	cap=$(read_attr "$BAT/capacity")
+	[ -n "$cap" ] || continue
+	st=$(read_attr "$BAT/status")
+	[ -n "$st" ] || st="Unknown"
+	count=$((count + 1))
+	cap_total=$((cap_total + cap))
+	[ -n "$first_st" ] || first_st=$st
+	case "$st" in
+	Charging) charging=1 ;;
+	Discharging) discharging=1 ;;
+	Full) full_count=$((full_count + 1)) ;;
+	esac
+
+	now=$(read_attr "$BAT/energy_now")
+	full=$(read_attr "$BAT/energy_full")
+	rate=$(read_attr "$BAT/power_now")
+	if [ -z "$now" ] || [ -z "$rate" ]; then
+		now=$(read_attr "$BAT/charge_now")
+		full=$(read_attr "$BAT/charge_full")
+		rate=$(read_attr "$BAT/current_now")
+	fi
+	if [ -n "$now" ] && [ -n "$full" ]; then
+		sum_now=$((sum_now + now))
+		sum_full=$((sum_full + full))
+	else
+		sums=0
+	fi
+	# Only the battery in use draws; the others read 0.
+	if [ -n "$rate" ] && [ "$rate" -gt 0 ] 2>/dev/null; then
+		sum_rate=$((sum_rate + rate))
+	fi
+done
+[ "$count" -gt 0 ] || exit 0
+
+if [ "$sums" = 1 ] && [ "$sum_full" -gt 0 ]; then
+	cap=$((sum_now * 100 / sum_full))
+else
+	cap=$((cap_total / count))
+fi
+[ "$cap" -le 100 ] || cap=100
+# One battery charging is the machine charging, one draining is it on
+# battery; the idle one beside it ("Not charging") says nothing of the whole.
+if [ "$charging" = 1 ]; then st="Charging"
+elif [ "$discharging" = 1 ]; then st="Discharging"
+elif [ "$full_count" = "$count" ]; then st="Full"
+else st=$first_st
+fi
 
 if [ "$st" = "Charging" ]; then icon="󰂅"; color="#9ece6a"
 elif [ "$cap" -le 5 ];  then icon="󰁺"; color="#f7768e"
@@ -34,26 +91,15 @@ elif [ "$cap" -le 80 ]; then icon="󰂁"; color="#0db9d7"
 else                         icon="󰁹"; color="#0db9d7"
 fi
 
-# Prefer the energy_* set, fall back to charge_*. Selected on whether the
-# values actually read back, not on whether the files exist -- see read_attr.
-now=$(read_attr "$BAT/energy_now")
-full=$(read_attr "$BAT/energy_full")
-rate=$(read_attr "$BAT/power_now")
-if [ -z "$now" ] || [ -z "$rate" ]; then
-	now=$(read_attr "$BAT/charge_now")
-	full=$(read_attr "$BAT/charge_full")
-	rate=$(read_attr "$BAT/current_now")
-fi
-
 # No usable rate just means no time estimate; the percentage still stands.
 mins=""
-if [ -n "$now" ] && [ -n "$rate" ] && [ "$rate" -gt 0 ] 2>/dev/null; then
+if [ "$sums" = 1 ] && [ "$sum_rate" -gt 0 ]; then
 	case "$st" in
 	Charging)
-		[ -n "$full" ] && mins=$(( (full - now) * 60 / rate ))
+		mins=$(( (sum_full - sum_now) * 60 / sum_rate ))
 		;;
 	Discharging)
-		mins=$((now * 60 / rate))
+		mins=$((sum_now * 60 / sum_rate))
 		;;
 	esac
 fi
