@@ -178,6 +178,9 @@ int main(int argc, char *argv[])
         ipc->handle(QStringLiteral("brightness"),
                     QStringLiteral("keyboard-down"),
                     [hardware]() { hardware->keyboardBacklightDown(); });
+        ipc->handle(QStringLiteral("brightness"),
+                    QStringLiteral("keyboard-cycle"),
+                    [hardware]() { hardware->keyboardBacklightCycle(); });
     }
     ipc->handle(QStringLiteral("vpn"), QStringLiteral("toggle"),
                 []() { VpnState::instance()->toggle(); });

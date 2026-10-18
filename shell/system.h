@@ -1,6 +1,7 @@
 /* The "System" dropdown: CPU/memory/temperature (scripts/fanshell-qs-sysinfo) as
  * three side-by-side tiles, a row of Weather + larger VPN/Bluetooth/Clipboard
- * pills (moved off the bar), a standard D-Bus power-profile selector, audio
+ * pills (moved off the bar), a standard D-Bus power-profile selector, the
+ * keyboard backlight (on a machine that has one), audio
  * (output/mic/device switch), a button into the Displays popup (displays.h),
  * and power buttons backed by scripts/fanshell-qs-power. */
 #ifndef FANSHELL_QS_SYSTEM_H
@@ -27,6 +28,7 @@ public:
 
 private:
     void syncAudio();
+    void syncKeyboard();
     void rebuildDevices();
     void parseSysInfo(const QString &text);
 
@@ -40,6 +42,11 @@ private:
     class ClickableText *m_micIcon;
     ValueSlider *m_micSlider;
     TextItem *m_micPct;
+    class ClickableText *m_kbdIcon = nullptr;
+    ValueSlider *m_kbdSlider = nullptr;
+    TextItem *m_kbdPct = nullptr;
+    /* What the icon restores after switching the backlight off. */
+    int m_kbdLastOn = 0;
     QWidget *m_deviceBox;
     QStringList m_deviceKey;
 };

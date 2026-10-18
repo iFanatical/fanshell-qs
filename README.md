@@ -182,7 +182,7 @@ out or empty.
 | feh | `feh` | `media-gfx/feh` | setting the wallpaper from the picker, and restoring it at startup |
 | NetworkManager | `NetworkManager` | `net-misc/networkmanager` | the network pill and Wi-Fi list (`nmcli`) |
 | BlueZ | `bluez` | `net-wireless/bluez` | the Bluetooth popup (`bluetoothctl`) |
-| brightnessctl | `brightnessctl` | `app-misc/brightnessctl` | laptop screen and keyboard backlight |
+| brightnessctl | `brightnessctl` | `app-misc/brightnessctl` | laptop screen and keyboard backlight (the brightness keys, and the System dropdown's keyboard row) |
 | ddcutil | `ddcutil` | `app-misc/ddcutil` | external monitor brightness over DDC/CI (needs the `i2c-dev` module and access to `/dev/i2c-*`) |
 | power-profiles-daemon | `power-profiles-daemon` | `sys-power/power-profiles-daemon` | the System dropdown's power-profile selector |
 | wireguard-tools | `wireguard-tools` | `net-vpn/wireguard-tools` | the VPN pill; `wg-quick` runs through passwordless `sudo -n` |

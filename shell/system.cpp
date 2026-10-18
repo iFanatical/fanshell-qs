@@ -13,6 +13,7 @@
 #include "bluetooth.h"
 #include "clipboard.h"
 #include "controlpanel.h"
+#include "hardwarecontrols.h"
 #include "pills.h"
 #include "powerprofiles.h"
 #include "procutil.h"
@@ -420,6 +421,52 @@ SystemPopup::SystemPopup(QWidget *anchor) : ContentPopup(anchor, 360)
 
     lay->addWidget(new HLine(body()));
 
+    /* ---- Keyboard backlight, on a machine that has one ---- */
+    HardwareControls *hw = HardwareControls::instance();
+    if (hw->hasKeyboardBacklight() && hw->keyboardMax() > 0) {
+        lay->addWidget(sectionLabel(QStringLiteral("Keyboard backlight"),
+                                    body()));
+        auto *kbdRow = new QWidget(body());
+        auto *kl = new QHBoxLayout(kbdRow);
+        kl->setContentsMargins(0, 0, 0, 0);
+        kl->setSpacing(Theme::rowSpacing);
+        m_kbdIcon = new ClickableText(kbdRow);
+        m_kbdIcon->setPixelSize(Theme::bodyFontSize);
+        m_kbdIcon->setFixedWidth(20);
+        m_kbdSlider = new ValueSlider(kbdRow);
+        m_kbdSlider->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        m_kbdPct = new TextItem(kbdRow);
+        m_kbdPct->setPixelSize(Theme::smallFontSize);
+        m_kbdPct->setHAlign(Qt::AlignRight);
+        m_kbdPct->setFixedWidth(44);
+        kl->addWidget(m_kbdIcon, 0, Qt::AlignVCenter);
+        kl->addWidget(m_kbdSlider, 1, Qt::AlignVCenter);
+        kl->addWidget(m_kbdPct, 0, Qt::AlignVCenter);
+        lay->addWidget(kbdRow);
+
+        /* The icon switches it off, and back on to where it was. */
+        connect(m_kbdIcon, &ClickableText::clicked, this, [this, hw]() {
+            if (hw->keyboardLevel() > 0)
+                hw->setKeyboardBacklight(0);
+            else
+                hw->setKeyboardBacklight(m_kbdLastOn > 0 ? m_kbdLastOn
+                                                         : hw->keyboardMax());
+        });
+        /* Snaps to the device's levels: three on a ThinkPad. */
+        connect(m_kbdSlider, &ValueSlider::moved, this, [hw](qreal v) {
+            hw->setKeyboardBacklight(qRound(v * hw->keyboardMax()));
+        });
+        connect(hw, &HardwareControls::keyboardBacklightChanged, this,
+                &SystemPopup::syncKeyboard);
+        connect(this, &ShellPopup::popupVisibleChanged, this,
+                [hw](bool visible) {
+                    if (visible)
+                        hw->refreshKeyboardBacklight();
+                });
+        syncKeyboard();
+        lay->addWidget(new HLine(body()));
+    }
+
     /* ---- Output ---- */
     lay->addWidget(sectionLabel(QStringLiteral("Output"), body()));
     auto *outRow = new QWidget(body());
@@ -580,6 +627,27 @@ void SystemPopup::syncAudio()
                       + QStringLiteral("%"));
 
     rebuildDevices();
+}
+
+void SystemPopup::syncKeyboard()
+{
+    if (!m_kbdSlider)
+        return;
+    HardwareControls *hw = HardwareControls::instance();
+    const int level = hw->keyboardLevel();
+    const int max = qMax(1, hw->keyboardMax());
+    if (level > 0)
+        m_kbdLastOn = level;
+    /* mdi keyboard / keyboard-off-outline */
+    m_kbdIcon->setText(level > 0 ? glyph(U'\U000F030C')
+                                 : glyph(U'\U000F0E4B'));
+    m_kbdIcon->setColor(level > 0 ? Theme::text : Theme::textMuted);
+    m_kbdSlider->setValue(qreal(level) / max);
+    m_kbdSlider->setFillColor(level > 0 ? Theme::brightmagenta
+                                        : Theme::textMuted);
+    m_kbdPct->setText(level > 0 ? QString::number(qRound(level * 100.0 / max))
+                                      + QStringLiteral("%")
+                                : QStringLiteral("Off"));
 }
 
 void SystemPopup::rebuildDevices()

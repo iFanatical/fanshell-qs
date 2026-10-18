@@ -1,11 +1,16 @@
 #include "hardwarecontrols.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
+#include <QSocketNotifier>
 #include <QStandardPaths>
 #include <QTimer>
+
+#include <fcntl.h>
+#include <unistd.h>
 
 #include <memory>
 
@@ -72,6 +77,23 @@ QString eventSound()
     return sound;
 }
 
+QString keyboardPath(const QString &device, const char *attribute)
+{
+    return QStringLiteral("/sys/class/leds/") + device + QLatin1Char('/')
+           + QLatin1String(attribute);
+}
+
+/* -1 when the attribute is missing or unreadable. */
+int readSysfsInt(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return -1;
+    bool ok = false;
+    const int value = file.readAll().trimmed().toInt(&ok);
+    return ok ? value : -1;
+}
+
 } // namespace
 
 HardwareControls *HardwareControls::instance()
@@ -94,6 +116,60 @@ HardwareControls::HardwareControls(QObject *parent) : QObject(parent)
             break;
         }
     }
+    if (hasKeyboardBacklight()) {
+        m_keyboardMax = readSysfsInt(keyboardPath(m_keyboardDevice,
+                                                  "max_brightness"));
+        m_keyboardLevel = qMax(0, readKeyboardLevel());
+        watchKeyboardFirmware();
+    }
+}
+
+int HardwareControls::readKeyboardLevel() const
+{
+    return readSysfsInt(keyboardPath(m_keyboardDevice, "brightness"));
+}
+
+void HardwareControls::refreshKeyboardBacklight()
+{
+    if (!hasKeyboardBacklight() || m_keyboardBusy)
+        return;
+    const int level = readKeyboardLevel();
+    if (level >= 0 && level != m_keyboardLevel) {
+        m_keyboardLevel = level;
+        emit keyboardBacklightChanged();
+    }
+}
+
+/* brightness_hw_changed is sysfs_notify()'d when the firmware changes the
+ * level by itself; the shell's own writes do not touch it. A sysfs
+ * attribute signals that as POLLPRI, which QSocketNotifier calls
+ * Exception, and must be read once before the first poll and re-read from
+ * the start after each one. Reading it fails with ENODATA until the first
+ * change, which is fine. */
+void HardwareControls::watchKeyboardFirmware()
+{
+    const QByteArray path = QFile::encodeName(
+        keyboardPath(m_keyboardDevice, "brightness_hw_changed"));
+    m_keyboardHwFd = ::open(path.constData(), O_RDONLY | O_CLOEXEC);
+    if (m_keyboardHwFd < 0)
+        return;
+    char buf[16];
+    [[maybe_unused]] ssize_t n = ::read(m_keyboardHwFd, buf, sizeof buf);
+    auto *notifier = new QSocketNotifier(m_keyboardHwFd,
+                                         QSocketNotifier::Exception, this);
+    connect(notifier, &QSocketNotifier::activated, this, [this]() {
+        char b[16];
+        ::lseek(m_keyboardHwFd, 0, SEEK_SET);
+        [[maybe_unused]] ssize_t r = ::read(m_keyboardHwFd, b, sizeof b);
+        const int level = readKeyboardLevel();
+        if (level < 0)
+            return;
+        m_keyboardLevel = level;
+        emit keyboardBacklightChanged();
+        if (m_keyboardMax > 0)
+            HardwareOsd::instance()->showKeyboardBacklight(
+                qRound(level * 100.0 / m_keyboardMax));
+    });
 }
 
 void HardwareControls::volumeUp()
@@ -168,92 +244,134 @@ int HardwareControls::steppedLevel(int current, int direction)
 
 void HardwareControls::brightnessUp()
 {
-    adjustSysfs(false, 1);
+    adjustSysfs(1);
 }
 
 void HardwareControls::brightnessDown()
 {
-    adjustSysfs(false, -1);
+    adjustSysfs(-1);
 }
 
 void HardwareControls::keyboardBacklightUp()
 {
-    if (hasKeyboardBacklight())
-        adjustSysfs(true, 1);
+    stepKeyboard(1);
 }
 
 void HardwareControls::keyboardBacklightDown()
 {
-    if (hasKeyboardBacklight())
-        adjustSysfs(true, -1);
+    stepKeyboard(-1);
 }
 
-void HardwareControls::adjustSysfs(bool keyboard, int direction)
+void HardwareControls::keyboardBacklightCycle()
 {
-    int &steps = keyboard ? m_keyboardSteps : m_backlightSteps;
-    bool &busy = keyboard ? m_keyboardBusy : m_backlightBusy;
-    steps += direction;
-    if (!busy)
-        runSysfsQueue(keyboard);
+    if (!hasKeyboardBacklight() || m_keyboardMax <= 0)
+        return;
+    const int from = m_keyboardPending >= 0 ? m_keyboardPending
+                                            : m_keyboardLevel;
+    setKeyboardBacklight(from >= m_keyboardMax ? 0 : from + 1, true);
 }
 
-void HardwareControls::runSysfsQueue(bool keyboard)
+/* A tenth of the range per press, and never less than one level, so a
+ * three-level keyboard steps off/low/high and a 0-255 one in ten presses.
+ * Unlike the screen, the keyboard may go fully off. */
+void HardwareControls::stepKeyboard(int direction)
 {
-    int &steps = keyboard ? m_keyboardSteps : m_backlightSteps;
-    bool &busy = keyboard ? m_keyboardBusy : m_backlightBusy;
-    if (!steps) {
-        busy = false;
+    if (!hasKeyboardBacklight() || m_keyboardMax <= 0)
+        return;
+    const int from = m_keyboardPending >= 0 ? m_keyboardPending
+                                            : m_keyboardLevel;
+    const int step = qMax(1, qRound(m_keyboardMax / 10.0));
+    setKeyboardBacklight(qBound(0, from + direction * step, m_keyboardMax),
+                         true);
+}
+
+void HardwareControls::setKeyboardBacklight(int level, bool osd)
+{
+    if (!hasKeyboardBacklight())
+        return;
+    m_keyboardPending = qBound(0, level, m_keyboardMax);
+    m_keyboardPendingOsd = m_keyboardPendingOsd || osd;
+    if (!m_keyboardBusy)
+        runKeyboardQueue();
+}
+
+/* One brightnessctl at a time; requests made meanwhile collapse into the
+ * last one, so dragging the slider does not queue a process per pixel. */
+void HardwareControls::runKeyboardQueue()
+{
+    if (m_keyboardPending < 0) {
+        m_keyboardBusy = false;
         return;
     }
-    busy = true;
-    QStringList query;
-    if (keyboard)
-        query << QStringLiteral("--device") << m_keyboardDevice;
-    else
-        query << QStringLiteral("--class=backlight");
-    query << QStringLiteral("-m");
-    run(QStringLiteral("brightnessctl"), query,
-        [this, keyboard](int status, const QByteArray &output) {
-            int &pending = keyboard ? m_keyboardSteps : m_backlightSteps;
-            bool &active = keyboard ? m_keyboardBusy : m_backlightBusy;
+    const int level = m_keyboardPending;
+    const bool osd = m_keyboardPendingOsd;
+    m_keyboardPending = -1;
+    m_keyboardPendingOsd = false;
+    m_keyboardBusy = true;
+    run(QStringLiteral("brightnessctl"),
+        {QStringLiteral("--device"), m_keyboardDevice, QStringLiteral("set"),
+         QString::number(level)},
+        [this, level, osd](int status, const QByteArray &) {
+            m_keyboardBusy = false;
+            if (status == 0) {
+                m_keyboardLevel = level;
+                emit keyboardBacklightChanged();
+                if (osd)
+                    HardwareOsd::instance()->showKeyboardBacklight(
+                        qRound(level * 100.0 / m_keyboardMax));
+            } else {
+                m_keyboardPending = -1;
+                notifyFailure(QStringLiteral("Keyboard backlight"),
+                              QStringLiteral("Could not change brightness"));
+                refreshKeyboardBacklight();
+                return;
+            }
+            runKeyboardQueue();
+        });
+}
+
+void HardwareControls::adjustSysfs(int direction)
+{
+    m_backlightSteps += direction;
+    if (!m_backlightBusy)
+        runSysfsQueue();
+}
+
+void HardwareControls::runSysfsQueue()
+{
+    if (!m_backlightSteps) {
+        m_backlightBusy = false;
+        return;
+    }
+    m_backlightBusy = true;
+    run(QStringLiteral("brightnessctl"),
+        {QStringLiteral("--class=backlight"), QStringLiteral("-m")},
+        [this](int status, const QByteArray &output) {
             const int current = percentFromBrightnessctl(output);
             if (status != 0 || current < 0) {
-                pending = 0;
-                active = false;
-                notifyFailure(keyboard ? QStringLiteral("Keyboard backlight")
-                                       : QStringLiteral("Brightness"),
+                m_backlightSteps = 0;
+                m_backlightBusy = false;
+                notifyFailure(QStringLiteral("Brightness"),
                               QStringLiteral("No supported brightness device was found"));
                 return;
             }
-            const int queued = pending;
-            pending = 0;
+            const int queued = m_backlightSteps;
+            m_backlightSteps = 0;
             int next = current;
             const int direction = queued > 0 ? 1 : -1;
             for (int i = 0; i < qAbs(queued); ++i)
                 next = steppedLevel(next, direction);
-            QStringList set;
-            if (keyboard)
-                set << QStringLiteral("--device") << m_keyboardDevice;
-            else
-                set << QStringLiteral("--class=backlight");
-            set << QStringLiteral("set")
-                << QString::number(next) + QLatin1Char('%');
-            run(QStringLiteral("brightnessctl"), set,
-                [this, keyboard, next](int setStatus, const QByteArray &) {
-                    bool &running = keyboard ? m_keyboardBusy : m_backlightBusy;
-                    running = false;
-                    if (setStatus == 0) {
-                        if (keyboard)
-                            HardwareOsd::instance()->showKeyboardBacklight(next);
-                        else
-                            HardwareOsd::instance()->showBrightness(next, false);
-                    } else {
-                        notifyFailure(keyboard
-                                          ? QStringLiteral("Keyboard backlight")
-                                          : QStringLiteral("Brightness"),
+            run(QStringLiteral("brightnessctl"),
+                {QStringLiteral("--class=backlight"), QStringLiteral("set"),
+                 QString::number(next) + QLatin1Char('%')},
+                [this, next](int setStatus, const QByteArray &) {
+                    m_backlightBusy = false;
+                    if (setStatus == 0)
+                        HardwareOsd::instance()->showBrightness(next, false);
+                    else
+                        notifyFailure(QStringLiteral("Brightness"),
                                       QStringLiteral("Could not change brightness"));
-                    }
-                    runSysfsQueue(keyboard);
+                    runSysfsQueue();
                 });
         });
 }
