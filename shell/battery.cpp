@@ -82,6 +82,7 @@ QString BatteryState::summary() const
 
 BatteryWidget::BatteryWidget(QWidget *parent) : BarPill(parent)
 {
+    setBold(true);
     m_popup = new BatteryPopup(this);
     connect(this, &BarPill::clicked, m_popup, &ShellPopup::togglePopup);
     connect(m_popup, &ShellPopup::popupVisibleChanged, this,

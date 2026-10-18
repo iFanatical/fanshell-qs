@@ -157,10 +157,19 @@ void BarPill::setLarge(bool l)
     update();
 }
 
+void BarPill::setBold(bool b)
+{
+    if (m_bold == b)
+        return;
+    m_bold = b;
+    updateGeometry();
+    update();
+}
+
 qreal BarPill::contentWidth() const
 {
     const int fsize = m_large ? Theme::panelFontSize * 2 : Theme::panelFontSize;
-    const QFontMetricsF fm(Theme::font(fsize));
+    const QFontMetricsF fm(Theme::font(fsize, m_bold));
     qreal w = 0;
     bool hasIcon = !m_icon.isEmpty();
     if (hasIcon)
@@ -194,7 +203,7 @@ void BarPill::paintEvent(QPaintEvent *)
                      m_active ? (m_large ? 2 : 1) : 0);
 
     const int fsize = m_large ? Theme::panelFontSize * 2 : Theme::panelFontSize;
-    p.setFont(Theme::font(fsize));
+    p.setFont(Theme::font(fsize, m_bold));
     const QFontMetricsF fm(p.font());
     qreal x = (width() - contentWidth()) / 2.0;
     const QColor base = hl ? Theme::tagActive : m_tint;

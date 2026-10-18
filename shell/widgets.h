@@ -58,6 +58,9 @@ public:
      * popup (e.g. system.cpp's Bluetooth/VPN/Clipboard row) rather than the
      * normal bar row. */
     void setLarge(bool l);
+    /* Bold icon and label, for a pill whose short figure should stand out
+     * (the battery's percentage). */
+    void setBold(bool b);
 
     QSize sizeHint() const override;
     QSize minimumSizeHint() const override { return sizeHint(); }
@@ -87,6 +90,7 @@ private:
     bool m_active = false;
     bool m_hover = false;
     bool m_large = false;
+    bool m_bold = false;
     Qt::MouseButton m_pressedButton = Qt::NoButton;
 };
 
