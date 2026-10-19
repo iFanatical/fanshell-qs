@@ -133,6 +133,19 @@ void HardwareOsd::showKeyboardBacklight(int percent)
     present();
 }
 
+void HardwareOsd::showLock(const QString &name, const QString &glyph, bool on)
+{
+    m_kind = Kind::Lock;
+    m_label = name;
+    m_lockGlyph = glyph;
+    m_value = on ? 100 : 0;
+    m_muted = false;
+    m_showProgress = false;
+    m_accent = on ? Theme::accent : Theme::textMuted;
+    m_state = on ? QStringLiteral("On") : QStringLiteral("Off");
+    present();
+}
+
 void HardwareOsd::showVpn(bool connected, const QString &interfaceName,
                           const QString &ipAddress)
 {
@@ -243,6 +256,7 @@ bool HardwareOsd::showNotification(uint id, const QString &appName,
         m_label = QStringLiteral("Keyboard backlight");
         m_accent = Theme::brightmagenta;
         break;
+    case Kind::Lock:
     case Kind::Vpn:
     case Kind::Media:
         break;
@@ -420,6 +434,11 @@ void HardwareOsd::drawIcon(QPainter &p, const QRectF &r) const
         for (int i = 0; i < 3; ++i)
             p.drawLine(QPointF(r.left() + 9 + i * 8, r.top() + 13),
                        QPointF(r.left() + 12 + i * 8, r.top() + 13));
+    } else if (m_kind == Kind::Lock) {
+        /* A key cap with its letter. */
+        p.drawRoundedRect(r.adjusted(3, 3, -3, -3), 6, 6);
+        p.setFont(Theme::font(17, true));
+        p.drawText(r.adjusted(3, 2, -3, -3), Qt::AlignCenter, m_lockGlyph);
     } else if (m_kind == Kind::Microphone) {
         p.drawRoundedRect(QRectF(c.x() - 5, r.top() + 3, 10, 18), 5, 5);
         p.drawArc(QRectF(c.x() - 10, r.top() + 8, 20, 18), 180 * 16,

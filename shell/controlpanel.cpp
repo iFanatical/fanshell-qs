@@ -190,9 +190,12 @@ private:
                                      ? QStringLiteral("Only before sleep")
                                      : QStringLiteral("Off")));
 
-        m_keyboard->setStatus(KeyboardSettings::instance()->settings().numlock
-                                  ? QStringLiteral("Num Lock on at login")
-                                  : QStringLiteral("Num Lock left as is"));
+        const KeyboardSettings::Settings keys = KeyboardSettings::instance()->settings();
+        m_keyboard->setStatus(QStringLiteral("Repeat %1 ms · %2/s · Num Lock %3")
+                                  .arg(keys.repeatDelay)
+                                  .arg(keys.repeatRate)
+                                  .arg(keys.numlock ? QStringLiteral("on")
+                                                    : QStringLiteral("off")));
 
         const QString path = Paths::readConf(QStringLiteral("wallpaper.conf"))
                                  .value(QStringLiteral("path"));

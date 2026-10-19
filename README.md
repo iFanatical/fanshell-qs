@@ -45,12 +45,12 @@ are the optional features listed under [Requirements](#requirements).
 ```sh
 sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config \
     qt6-qtbase-devel libxcb-devel libX11-devel libXcomposite-devel \
-    libXdamage-devel libXfixes-devel pulseaudio-libs-devel \
+    libXdamage-devel libXfixes-devel libxkbfile-devel pulseaudio-libs-devel \
     zig libXft-devel libXinerama-devel fontconfig-devel \
     xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd \
     jq xdotool xprop feh NetworkManager bluez brightnessctl \
     ddcutil power-profiles-daemon wireguard-tools net-snmp-utils curl \
-    pipewire-utils alacritty xdg-utils xset xinput xsetroot xsettingsd \
+    pipewire-utils alacritty xdg-utils xinput xsetroot xsettingsd \
     mate-polkit
 ```
 
@@ -162,7 +162,8 @@ manager itself, and what it needs to build, is listed in its own repo.
 |---|---|---|---|
 | C/C++ toolchain | `gcc` `gcc-c++` `make` `pkgconf-pkg-config` | `sys-devel/gcc` `dev-build/make` `dev-util/pkgconf` | building the shell |
 | Qt 6 base | `qt6-qtbase-devel` | `dev-qt/qtbase` (USE `dbus gui network widgets X`) | the shell: widgets, D-Bus, sockets, and the xcb platform plugin |
-| libxcb (with RandR, DPMS and the screen saver extension) | `libxcb-devel` | `x11-libs/libxcb` | the panel's dock surface, the Displays popup, digital vibrance, Screen power, lock on idle |
+| libxcb (with RandR, DPMS, the screen saver extension, XKB and XInput) | `libxcb-devel` | `x11-libs/libxcb` | the panel's dock surface, the Displays popup, digital vibrance, Screen power, lock on idle, the Keyboard settings |
+| libxkbfile | `libxkbfile-devel` | `x11-libs/libxkbfile` | the Keyboard settings' Caps Lock and Compose options, read from the XKB rules as setxkbmap does (it is also what X's own `xkbcomp` uses, so it is usually there already) |
 | X11, XComposite, XDamage, XFixes | `libX11-devel` `libXcomposite-devel` `libXdamage-devel` `libXfixes-devel` | `x11-libs/libX11` `x11-libs/libXcomposite` `x11-libs/libXdamage` `x11-libs/libXfixes` | the XEmbed tray |
 | libpulse | `pulseaudio-libs-devel` | `media-libs/libpulse` | volume and microphone control; works against pipewire-pulse |
 | An X server and xinit | `xorg-x11-server-Xorg` `xorg-x11-xinit` | `x11-base/xorg-server` `x11-apps/xinit` | running the session from `~/.xinitrc` with `startx` (XLibre works too) |
@@ -202,7 +203,6 @@ instead of installed.
 
 | What | Fedora | Gentoo | For |
 |---|---|---|---|
-| xset | `xset` | `x11-apps/xset` | key repeat rate (`xset r rate 200 35`) |
 | xinput | `xinput` | `x11-apps/xinput` | per-mouse pointer acceleration |
 | xsetroot | `xsetroot` | `x11-apps/xsetroot` | the root window's arrow cursor |
 | xsettingsd | `xsettingsd` | `x11-misc/xsettingsd` | GTK/Qt theme and font settings for X apps |
@@ -218,13 +218,13 @@ Required:
 # Fedora
 sudo dnf install gcc gcc-c++ make pkgconf-pkg-config \
     qt6-qtbase-devel libxcb-devel libX11-devel libXcomposite-devel \
-    libXdamage-devel libXfixes-devel pulseaudio-libs-devel \
+    libXdamage-devel libXfixes-devel libxkbfile-devel pulseaudio-libs-devel \
     xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd
 
 # Gentoo
 sudo emerge dev-qt/qtbase x11-libs/libxcb x11-libs/libX11 \
     x11-libs/libXcomposite \
-    x11-libs/libXdamage x11-libs/libXfixes media-libs/libpulse \
+    x11-libs/libXdamage x11-libs/libXfixes x11-libs/libxkbfile media-libs/libpulse \
     x11-base/xorg-server x11-apps/xinit x11-misc/picom x11-apps/xrandr \
     x11-misc/sxhkd
 ```
@@ -236,7 +236,7 @@ Optional, everything above:
 sudo dnf install feh NetworkManager bluez \
     brightnessctl ddcutil power-profiles-daemon wireguard-tools \
     net-snmp-utils curl pipewire-utils alacritty xdg-utils \
-    xset xinput xsetroot xsettingsd mate-polkit
+    xinput xsetroot xsettingsd mate-polkit
 tools/install-i3lock-color   # builds it; needs the deps listed in its header
 
 # Gentoo
@@ -245,7 +245,7 @@ sudo emerge media-gfx/feh \
     app-misc/brightnessctl app-misc/ddcutil sys-power/power-profiles-daemon \
     net-vpn/wireguard-tools net-analyzer/net-snmp net-misc/curl \
     media-video/pipewire x11-terms/alacritty \
-    x11-misc/xdg-utils x11-apps/xset x11-apps/xinput x11-apps/xsetroot \
+    x11-misc/xdg-utils x11-apps/xinput x11-apps/xsetroot \
     x11-misc/xsettingsd mate-extra/mate-polkit x11-misc/i3lock-color
 ```
 
@@ -275,8 +275,8 @@ what is their window manager's own and cannot drift apart:
   window manager: the environment (`PATH`, `SCRIPTS`, the D-Bus address,
   XDG user dirs, `XDG_SESSION_TYPE`, `_JAVA_AWT_WM_NONREPARENTING`), then
   `~/.X_envars` (the session repo's, for what is its window manager's own,
-  such as `XDG_CURRENT_DESKTOP`), the saved output layout, key repeat and
-  per-mouse acceleration, the cursor, the [session
+  such as `XDG_CURRENT_DESKTOP`), the saved output layout, per-mouse
+  acceleration, the cursor, the [session
   daemons](#session-extras) and the GTK theme. Then it execs `WM ARGS...`.
   Each session repo's `xinitrc` is that one line, `exec fanshell-qs-session
   qtile start` or `... oxwm`, falling back to the bare window manager when
@@ -327,7 +327,7 @@ cache loses nothing you chose:
 | `outputs.conf` | output layouts, one per set of connected outputs; applied at login (`fanshell-qs-session`) and on hotplug |
 | `dpms.conf` | screen blanking and DPMS timeouts; applied at startup |
 | `lock.conf` | lock on idle, before sleep, and the fullscreen pause |
-| `keyboard.conf` | Num Lock at login |
+| `keyboard.conf` | key repeat, Caps Lock and Compose keys, Num Lock at login, lock OSD, backlight timeout |
 | `websites.json` | linked from the repo (above) |
 | `sounds/` | optional `audio-volume-change.*` for volume feedback |
 
@@ -420,13 +420,33 @@ fullscreen.
 
 ### Keyboard
 
-**Keyboard** in the Control Panel (or `ipc call keyboard toggle`) has one
-setting, **Num Lock at login**, on by default: the shell turns Num Lock on
-when it first starts in an X session, with the same XKB call numlockx
-makes, so numlockx is not needed. It is done once per session (a property
-on the root window marks it), so restarting the shell leaves Num Lock as
-you last set it. Off leaves Num Lock however the keyboard starts. Saved to
-`keyboard.conf`.
+**Keyboard** in the Control Panel (or `ipc call keyboard toggle`):
+
+- **Repeat delay** and **Repeat rate**: how long a held key waits before
+  repeating, and how fast it repeats then (default 200 ms, 35 per second,
+  what `xset r rate 200 35` set before). Set through XKB, so xset is not
+  needed.
+- **Caps Lock key**: Caps Lock, Escape, Ctrl, swapped with Ctrl, or
+  nothing. **Compose key**: none, Right Alt, Menu or Right Ctrl; Compose
+  then two keys types one character (`'` `e` is é). These are the XKB
+  options `setxkbmap -option` sets (`caps:escape`, `compose:ralt`, ...),
+  applied by the shell itself through libxkbfile, so setxkbmap is not
+  needed either. Options it does not manage, from `xorg.conf` say, are
+  kept.
+- **Num Lock at login**, on by default: the shell turns Num Lock on when it
+  first starts in an X session, with the same XKB call numlockx makes. It
+  is done once per session (a property on the root window marks it), so
+  restarting the shell leaves Num Lock as you last set it.
+- **Show lock changes**: the OSD shows Caps Lock and Num Lock going on and
+  off, for keyboards without indicator lights.
+- **Backlight off after** (laptops with a keyboard backlight): switch the
+  backlight off after a time without keyboard or mouse input, and back to
+  its level at the next one. A level set while it is off (Fn+Space, the
+  System dropdown) is kept.
+
+A keyboard plugged in later starts with the X server's defaults, so the
+shell applies the repeat rate and the options again when one is added.
+Saved to `keyboard.conf`.
 
 ## Bringing over fanhypr-qs changes
 

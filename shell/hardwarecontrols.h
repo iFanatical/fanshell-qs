@@ -39,6 +39,8 @@ public:
      * not for the System dropdown's slider, which shows it already). */
     void setKeyboardBacklight(int level, bool osd = false);
     bool hasKeyboardBacklight() const { return !m_keyboardDevice.isEmpty(); }
+    /* The /sys/class/leds name, for brightnessctl --device. */
+    QString keyboardDevice() const { return m_keyboardDevice; }
     int keyboardLevel() const { return m_keyboardLevel; }
     int keyboardMax() const { return m_keyboardMax; }
     /* Re-reads the level from sysfs, for a change made outside the shell. */

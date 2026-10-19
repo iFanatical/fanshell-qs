@@ -273,67 +273,7 @@ QString Displays::profile(const QVector<Output> &outputs)
     return s;
 }
 
-/* ----------------------------------------------------------- ChoiceList */
-
 namespace {
-
-
-/* A drop-down: the current choice, and the list on click. */
-class Selector : public QWidget {
-public:
-    Selector(ChoiceList *list, QWidget *parent) : QWidget(parent), m_list(list)
-    {
-        setFixedHeight(Theme::buttonHeight);
-        setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
-        setCursor(Qt::PointingHandCursor);
-    }
-
-    void setChoices(const QStringList &items, int current)
-    {
-        m_items = items;
-        m_current = current;
-        update();
-    }
-
-    std::function<void(int)> chosen;
-
-protected:
-    void paintEvent(QPaintEvent *) override
-    {
-        QPainter p(this);
-        Theme::paintRect(p, rect(),
-                         m_hover && isEnabled() ? Theme::surfaceHover
-                                                : Theme::surface,
-                         Theme::radius);
-        p.setFont(Theme::font(Theme::smallFontSize));
-        p.setPen(isEnabled() ? Theme::text : Theme::textMuted);
-        const QString text = m_current >= 0 && m_current < m_items.size()
-                                 ? m_items[m_current]
-                                 : QString();
-        p.drawText(rect().adjusted(10, 0, -24, 0),
-                   Qt::AlignLeft | Qt::AlignVCenter, text);
-        p.setPen(Theme::textMuted);
-        p.drawText(rect().adjusted(0, 0, -10, 0),
-                   Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("▾"));
-    }
-    void enterEvent(QEnterEvent *) override { m_hover = true; update(); }
-    void leaveEvent(QEvent *) override { m_hover = false; update(); }
-    void mousePressEvent(QMouseEvent *e) override
-    {
-        if (e->button() != Qt::LeftButton || m_items.isEmpty())
-            return;
-        m_list->open(this, m_items, m_current, [this](int i) {
-            if (chosen)
-                chosen(i);
-        });
-    }
-
-private:
-    ChoiceList *m_list;
-    QStringList m_items;
-    int m_current = -1;
-    bool m_hover = false;
-};
 
 /* -------------------------------------------------------- ArrangementView */
 

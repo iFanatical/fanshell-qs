@@ -46,7 +46,8 @@ export _JAVA_AWT_WM_NONREPARENTING=1
 # outputs.defaults.conf), before anything maps a window.
 fanshell-qs-outputs apply
 
-xset r rate 200 35
+# Key repeat, Caps Lock and Compose are the shell's (Control Panel >
+# Keyboard, keyboard.conf), applied when it starts.
 if command -v xinput >/dev/null 2>&1; then
     set_accel() {
         xinput list --name-only | grep -i -- "$1" | while read -r device; do

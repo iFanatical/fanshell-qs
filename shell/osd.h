@@ -23,6 +23,9 @@ public:
     void showMicrophone(int percent, bool muted);
     void showBrightness(int percent, bool external);
     void showKeyboardBacklight(int percent);
+    /* Caps Lock or Num Lock switched; `glyph` is drawn on the key ("A",
+     * "1"). */
+    void showLock(const QString &name, const QString &glyph, bool on);
     void showVpn(bool connected, const QString &interfaceName,
                  const QString &ipAddress);
     void showMedia(const QString &action, const QString &title,
@@ -36,7 +39,7 @@ protected:
     void paintEvent(QPaintEvent *) override;
 
 private:
-    enum class Kind { Volume, Microphone, Brightness, Keyboard, Vpn, Media };
+    enum class Kind { Volume, Microphone, Brightness, Keyboard, Lock, Vpn, Media };
 
     explicit HardwareOsd(QWidget *parent = nullptr);
     void present();
@@ -53,6 +56,7 @@ private:
     QString m_label;
     QString m_state;
     QString m_mediaAction;
+    QString m_lockGlyph;
     QColor m_accent;
     bool m_configured = false;
 };

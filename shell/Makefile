@@ -2,18 +2,21 @@
 #
 # Needs qtbase (widgets, gui, dbus, network) with the xcb platform plugin,
 # libxcb (with RandR, DPMS and the screen saver extension, for displays,
-# vibrance, screen power and lock on idle), libpulse, and
-# X11/XComposite/XDamage/XFixes for the XEmbed tray.
+# vibrance, screen power and lock on idle; XKB and XInput, for the
+# keyboard settings), libpulse, X11/XComposite/XDamage/XFixes for the
+# XEmbed tray, and libxkbfile, which reads the XKB rules for the keyboard
+# options as setxkbmap does.
 #
 # Fedora:  dnf install qt6-qtbase-devel pulseaudio-libs-devel libxcb-devel \
 #                 libX11-devel libXcomposite-devel libXdamage-devel \
-#                 libXfixes-devel
+#                 libXfixes-devel libxkbfile-devel
 # Gentoo:  emerge dev-qt/qtbase media-libs/libpulse x11-libs/libxcb \
 #                 x11-libs/libX11 x11-libs/libXcomposite x11-libs/libXdamage \
-#                 x11-libs/libXfixes
+#                 x11-libs/libXfixes x11-libs/libxkbfile
 
 QTMODS   = Qt6Widgets Qt6Gui Qt6Core Qt6DBus Qt6Network
-PKGS     = $(QTMODS) libpulse xcb xcb-randr xcb-dpms xcb-screensaver x11 xcomposite xdamage xfixes
+PKGS     = $(QTMODS) libpulse xcb xcb-randr xcb-dpms xcb-screensaver xcb-xkb \
+           xcb-xinput x11 xcomposite xdamage xfixes xkbfile
 
 # XEmbed tray intake. Optional under Wayland in fanhypr-qs; on X11 it is the
 # native tray protocol, so it is always built here.

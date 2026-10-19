@@ -28,13 +28,15 @@ step "fanshell-qs: checking build dependencies"
 command -v pkg-config >/dev/null 2>&1 || die "pkg-config is not installed"
 missing=
 for pkg in Qt6Widgets Qt6Gui Qt6Core Qt6DBus Qt6Network libpulse xcb \
-           xcb-randr xcb-dpms xcb-screensaver x11 xcomposite xdamage xfixes; do
+           xcb-randr xcb-dpms xcb-screensaver xcb-xkb xcb-xinput x11 xcomposite \
+           xdamage xfixes xkbfile; do
     pkg-config --exists "$pkg" || missing="$missing $pkg"
 done
 if [ -n "$missing" ]; then
     printf 'missing:%s\n' "$missing" >&2
     printf 'Fedora:  sudo dnf install qt6-qtbase-devel pulseaudio-libs-devel libxcb-devel \\\n' >&2
-    printf '             libX11-devel libXcomposite-devel libXdamage-devel libXfixes-devel\n' >&2
+    printf '             libX11-devel libXcomposite-devel libXdamage-devel libXfixes-devel \\\n' >&2
+    printf '             libxkbfile-devel\n' >&2
     printf 'Gentoo:  see the Requirements section of %s/README.md\n' "$repo" >&2
     exit 1
 fi
