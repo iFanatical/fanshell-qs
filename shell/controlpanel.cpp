@@ -8,6 +8,7 @@
 #include <functional>
 
 #include "displays.h"
+#include "keyboard.h"
 #include "overlay.h"
 #include "paths.h"
 #include "wallpaper.h"
@@ -140,6 +141,9 @@ public:
         m_lock = add(U'\U000F097F', QStringLiteral("Screen lock"), []() {
             ScreenLock::instance()->openWindow();
         });
+        m_keyboard = add(U'\U000F030C', QStringLiteral("Keyboard"), []() {
+            KeyboardSettings::instance()->openWindow();
+        });
         m_wallpaper = add(U'\U000F0E09', QStringLiteral("Wallpaper"), []() {
             WallpaperPicker::instance()->openPicker();
         });
@@ -186,6 +190,10 @@ private:
                                      ? QStringLiteral("Only before sleep")
                                      : QStringLiteral("Off")));
 
+        m_keyboard->setStatus(KeyboardSettings::instance()->settings().numlock
+                                  ? QStringLiteral("Num Lock on at login")
+                                  : QStringLiteral("Num Lock left as is"));
+
         const QString path = Paths::readConf(QStringLiteral("wallpaper.conf"))
                                  .value(QStringLiteral("path"));
         m_wallpaper->setStatus(path.isEmpty() ? QStringLiteral("None set")
@@ -196,6 +204,7 @@ private:
     Tile *m_displays;
     Tile *m_power;
     Tile *m_lock;
+    Tile *m_keyboard;
     Tile *m_wallpaper;
 };
 

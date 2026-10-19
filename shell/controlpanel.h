@@ -1,5 +1,5 @@
 /* The Control Panel: one centred window with a tile per settings window
- * (Displays, Screen power, Screen lock, Wallpaper), opened from the System
+ * (Displays, Screen power, Screen lock, Keyboard, Wallpaper), opened from the System
  * dropdown's header so the dropdown itself stays about status and quick
  * actions.
  *

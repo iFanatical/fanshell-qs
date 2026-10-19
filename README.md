@@ -327,6 +327,7 @@ cache loses nothing you chose:
 | `outputs.conf` | output layouts, one per set of connected outputs; applied at login (`fanshell-qs-session`) and on hotplug |
 | `dpms.conf` | screen blanking and DPMS timeouts; applied at startup |
 | `lock.conf` | lock on idle, before sleep, and the fullscreen pause |
+| `keyboard.conf` | Num Lock at login |
 | `websites.json` | linked from the repo (above) |
 | `sounds/` | optional `audio-volume-change.*` for volume feedback |
 
@@ -339,13 +340,14 @@ scratchpad window ids, the `maximize` layout memo) stays in
 ### Control Panel
 
 The System dropdown is for status and quick actions: CPU, memory and
-temperature, weather, Bluetooth, clipboard, VPN, the power profile, audio,
+temperature, weather, Bluetooth, clipboard, VPN, the power profile, the
+keyboard backlight (on a laptop that has one), audio,
 and one row of icons for Lock, Sleep, Log out, Reboot and Power off (named
 in the caption below the row as you point at them; the last three ask for a
 second click). Settings live in the **Control Panel**, opened from the
 dropdown's header (or `ipc call controlpanel toggle`). It is a grid of
 tiles, each showing a line of live status and opening its own window:
-Displays, Screen power, Screen lock and Wallpaper. A new settings window
+Displays, Screen power, Screen lock, Keyboard and Wallpaper. A new settings window
 becomes a tile in `shell/controlpanel.cpp`.
 
 ### Displays
@@ -416,6 +418,16 @@ the screen locks by itself:
 without one, the screen locks after 10 minutes, before sleep, and pauses for
 fullscreen.
 
+### Keyboard
+
+**Keyboard** in the Control Panel (or `ipc call keyboard toggle`) has one
+setting, **Num Lock at login**, on by default: the shell turns Num Lock on
+when it first starts in an X session, with the same XKB call numlockx
+makes, so numlockx is not needed. It is done once per session (a property
+on the root window marks it), so restarting the shell leaves Num Lock as
+you last set it. Off leaves Num Lock however the keyboard starts. Saved to
+`keyboard.conf`.
+
 ## Bringing over fanhypr-qs changes
 
 The shell is a port, not a fork with shared history. Most files differ from
@@ -477,7 +489,7 @@ ups.community=public
 | `menu.source_dir` | this checkout, for the menu's entries that open its files (default `~/projects/window-managers/fanshell-qs`) |
 
 The other files in `~/.config/fanshell-qs` (`wallpaper.conf`,
-`vibrance.conf`, `outputs.conf`, `dpms.conf`, `lock.conf`) are written by
+`vibrance.conf`, `outputs.conf`, `dpms.conf`, `lock.conf`, `keyboard.conf`) are written by
 the shell's popups; edit those settings there.
 
 One environment variable remains, because it is about the window manager

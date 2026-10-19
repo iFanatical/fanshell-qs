@@ -5,7 +5,7 @@
  *   fanshell-qs-shell ipc call <target> <fn>  poke a running instance
  *                    (targets: shell, launcher, runner, emoji, notifications,
  *                     audio, brightness, media, vpn, wallpaper, menu,
- *                     outputs, dpms, lock, controlpanel) */
+ *                     outputs, dpms, lock, keyboard, controlpanel) */
 #include <QApplication>
 #include <QHash>
 #include <QScreen>
@@ -15,6 +15,7 @@
 #include "displays.h"
 #include "hardwarecontrols.h"
 #include "ipc.h"
+#include "keyboard.h"
 #include "launcher.h"
 #include "media.h"
 #include "notification.h"
@@ -112,6 +113,8 @@ int main(int argc, char *argv[])
     ScreenPower::instance();
     /* Locks on idle and before sleep, per lock.conf. */
     ScreenLock::instance();
+    /* Turns Num Lock on, once per X session, per keyboard.conf. */
+    KeyboardSettings::instance();
 
     auto *ipc = new IpcServer(&app);
     ipc->handle(QStringLiteral("menu"), QStringLiteral("toggle"),
@@ -209,6 +212,12 @@ int main(int argc, char *argv[])
                 []() { ControlPanel::instance()->openWindow(); });
     ipc->handle(QStringLiteral("controlpanel"), QStringLiteral("hide"),
                 []() { ControlPanel::instance()->hideWindow(); });
+    ipc->handle(QStringLiteral("keyboard"), QStringLiteral("toggle"),
+                []() { KeyboardSettings::instance()->toggleWindow(); });
+    ipc->handle(QStringLiteral("keyboard"), QStringLiteral("show"),
+                []() { KeyboardSettings::instance()->openWindow(); });
+    ipc->handle(QStringLiteral("keyboard"), QStringLiteral("hide"),
+                []() { KeyboardSettings::instance()->hideWindow(); });
     ipc->handle(QStringLiteral("lock"), QStringLiteral("toggle"),
                 []() { ScreenLock::instance()->toggleWindow(); });
     ipc->handle(QStringLiteral("lock"), QStringLiteral("show"),
