@@ -325,7 +325,7 @@ cache loses nothing you chose:
 | `vibrance.conf` | digital vibrance per output; re-applied at start and when an output connects |
 | `outputs.conf` | output layouts, one per set of connected outputs; applied at login (`fanshell-qs-session`) and on hotplug |
 | `dpms.conf` | screen blanking and DPMS timeouts; applied at startup |
-| `lock.conf` | lock on idle, before sleep, and the fullscreen pause |
+| `lock.conf` | lock on idle, before sleep, and the fullscreen and audio pauses |
 | `keyboard.conf` | key repeat, Caps Lock and Compose keys, Num Lock at login, lock OSD, backlight timeout |
 | `mouse.conf` | pointer settings per device, by name |
 | `websites.json` | linked from the repo (above) |
@@ -414,10 +414,23 @@ the screen locks by itself:
 - **Pause for fullscreen**: don't lock while the focused window is
   fullscreen, such as a video or a game. It locks once that ends if you are
   still away.
+- **Pause while audio plays**: don't lock while a program is playing
+  sound: music, a call, a video in a window. Streams no program owns
+  (loopbacks and virtual devices, which are always open) don't count, but
+  a game with its sound on does. The window shows what is holding the
+  lock off at the moment.
+
+Programs can also ask for it themselves: the shell answers
+`org.freedesktop.ScreenSaver` on the session bus (`Inhibit`/`UnInhibit`),
+which browsers playing video, video players and calls use. While one
+holds such a request the screen neither locks nor blanks (the X screen
+saver and DPMS are suspended too); a program that exits without letting go
+is let go of. Without this nothing in these sessions answered those
+requests.
 
 `ipc call lock now` locks straight away. Settings are saved to `lock.conf`;
 without one, the screen locks after 10 minutes, before sleep, and pauses for
-fullscreen.
+fullscreen and while audio plays.
 
 ### Keyboard
 

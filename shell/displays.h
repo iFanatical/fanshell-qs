@@ -18,6 +18,7 @@
 #ifndef FANSHELL_QS_DISPLAYS_H
 #define FANSHELL_QS_DISPLAYS_H
 
+#include <QElapsedTimer>
 #include <QObject>
 #include <QRect>
 #include <QString>
@@ -165,6 +166,8 @@ public:
         bool beforeSuspend = true;
         bool skipFullscreen = true; /* not while the focused window is
                                        fullscreen (video, games) */
+        bool skipAudio = true;      /* not while a program plays audio
+                                       (music, a call, a video) */
     };
 
     static ScreenLock *instance();
@@ -178,6 +181,10 @@ public:
     void openWindow();
     void toggleWindow();
     void hideWindow();
+
+    /* What is holding the idle lock off now -- programs that asked
+     * (idleinhibit.h), audio playing -- or empty. */
+    QStringList pausedBy() const;
 
 signals:
     /* fanshell-qs-lock has returned: the screen is locked, or it failed. */
@@ -198,6 +205,7 @@ private:
     /* Locked for this stretch of idle; cleared by the next input. */
     bool m_fired = false;
     qint64 m_lastIdle = 0;
+    QElapsedTimer m_age;
     QProcess *m_locker = nullptr;
     int m_sleepFd = -1;
 };

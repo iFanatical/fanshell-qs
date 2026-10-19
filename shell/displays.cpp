@@ -37,6 +37,7 @@
 #include <unistd.h>
 
 #include "wmstate.h"
+#include "idleinhibit.h"
 #include "overlay.h"
 #include "paths.h"
 #include "popup.h"
@@ -1692,7 +1693,16 @@ public:
         grid->addWidget(fieldLabel(QStringLiteral("Pause for fullscreen"), box()),
                         2, 0);
         grid->addWidget(toggleRow(&m_fullscreen), 2, 1);
+        grid->addWidget(fieldLabel(QStringLiteral("Pause while audio plays"), box()),
+                        3, 0);
+        grid->addWidget(toggleRow(&m_audio), 3, 1);
         lay->addLayout(grid);
+
+        m_pausedNow = new TextItem(box());
+        m_pausedNow->setPixelSize(Theme::tinyFontSize);
+        m_pausedNow->setColor(Theme::accent);
+        m_pausedNow->setElide(true);
+        lay->addWidget(m_pausedNow);
 
         auto *note = new QWidget(box());
         auto *nl = new QVBoxLayout(note);
@@ -1700,7 +1710,9 @@ public:
         nl->setSpacing(2);
         for (const char *line : {"Idle is time without keyboard or mouse input.",
                                  "Pause for fullscreen waits while a video or "
-                                 "game fills the screen."}) {
+                                 "game fills the screen.",
+                                 "Programs that ask -- a browser playing video, a "
+                                 "call -- pause it too."}) {
             auto *t = new TextItem(note);
             t->setPixelSize(Theme::tinyFontSize);
             t->setColor(Theme::textMuted);
@@ -1739,6 +1751,16 @@ public:
             s.skipFullscreen = !s.skipFullscreen;
             change(s);
         });
+        connect(m_audio, &ShellButton::activated, this, [this]() {
+            LockSettings s = m_settings;
+            s.skipAudio = !s.skipAudio;
+            change(s);
+        });
+        /* The "Paused now" line follows along while the window is open. */
+        connect(IdleInhibitor::instance(), &IdleInhibitor::changed, this,
+                [this]() { if (isVisible()) sync(); });
+        connect(PulseBackend::instance(), &PulseBackend::playingChanged, this,
+                [this]() { if (isVisible()) sync(); });
         connect(lockNow, &ShellButton::activated, this, [this]() {
             dismiss();
             /* After this popup has let go of the keyboard, which i3lock
@@ -1778,12 +1800,24 @@ private:
         onOff(m_suspend, m_settings.beforeSuspend);
         onOff(m_fullscreen, m_settings.skipFullscreen);
         m_fullscreen->setEnabled(m_settings.after > 0);
+        onOff(m_audio, m_settings.skipAudio);
+        m_audio->setEnabled(m_settings.after > 0);
+        const QStringList paused = ScreenLock::instance()->pausedBy();
+        m_pausedNow->setText(paused.isEmpty() || m_settings.after <= 0
+                                 ? QString()
+                                 : QStringLiteral("Paused now: ") + paused.join(QStringLiteral("; ")));
+        m_pausedNow->setToolTip(m_pausedNow->text());
+        m_pausedNow->setVisible(!m_pausedNow->text().isEmpty());
+        if (isVisible())
+            layoutBox();
     }
 
     LockSettings m_settings;
     Selector *m_after;
     ShellButton *m_suspend;
     ShellButton *m_fullscreen;
+    ShellButton *m_audio;
+    TextItem *m_pausedNow;
 };
 
 ScreenLock *ScreenLock::instance()
@@ -1805,7 +1839,11 @@ ScreenLock::ScreenLock(QObject *parent) : QObject(parent)
     if (conf.contains(QStringLiteral("skip_fullscreen")))
         m_settings.skipFullscreen =
             conf.value(QStringLiteral("skip_fullscreen")) == QLatin1String("on");
+    if (conf.contains(QStringLiteral("skip_audio")))
+        m_settings.skipAudio =
+            conf.value(QStringLiteral("skip_audio")) == QLatin1String("on");
 
+    m_age.start();
     m_idle.setSingleShot(true);
     connect(&m_idle, &QTimer::timeout, this, &ScreenLock::tick);
 
@@ -1828,7 +1866,8 @@ void ScreenLock::set(const Settings &s)
                            "popup.\nafter: seconds idle; 0 = never."),
             {QStringLiteral("after=%1").arg(s.after),
              QStringLiteral("before_suspend=%1").arg(s.beforeSuspend ? "on" : "off"),
-             QStringLiteral("skip_fullscreen=%1").arg(s.skipFullscreen ? "on" : "off")}))
+             QStringLiteral("skip_fullscreen=%1").arg(s.skipFullscreen ? "on" : "off"),
+             QStringLiteral("skip_audio=%1").arg(s.skipAudio ? "on" : "off")}))
         qWarning("fanshell-qs: cannot write %s",
                  qPrintable(Paths::configFile(QLatin1String(lockConf))));
     if (s.beforeSuspend)
@@ -1870,13 +1909,31 @@ void ScreenLock::tick()
         m_idle.start(int(std::clamp<qint64>(limit - idle + 50, 1000, 60000)));
         return;
     }
-    if (!m_fired && !(m_settings.skipFullscreen && fullscreenFocused(c))) {
+    /* Just started, and the sound server has not said what is playing yet:
+     * wait for it rather than lock over a video. Not for long, in case
+     * there is no sound server. */
+    if (m_settings.skipAudio && !PulseBackend::instance()->playingKnown
+        && m_age.elapsed() < 10000) {
+        m_idle.start(1000);
+        return;
+    }
+    if (!m_fired && !(m_settings.skipFullscreen && fullscreenFocused(c))
+        && pausedBy().isEmpty()) {
         m_fired = true;
         lockNow();
     }
     /* Past the limit: watch for the input that starts the next stretch, or
      * for the fullscreen window going away. */
     m_idle.start(5000);
+}
+
+QStringList ScreenLock::pausedBy() const
+{
+    QStringList out = IdleInhibitor::instance()->reasons();
+    const QStringList audio = PulseBackend::instance()->playing;
+    if (m_settings.skipAudio && !audio.isEmpty())
+        out << QStringLiteral("audio from ") + audio.join(QStringLiteral(", "));
+    return out;
 }
 
 void ScreenLock::lockNow(std::function<void()> done)

@@ -14,6 +14,7 @@
 #include "controlpanel.h"
 #include "displays.h"
 #include "hardwarecontrols.h"
+#include "idleinhibit.h"
 #include "ipc.h"
 #include "keyboard.h"
 #include "mouse.h"
@@ -112,6 +113,9 @@ int main(int argc, char *argv[])
     DisplaySettings::instance();
     /* Applies the saved blanking and DPMS settings. */
     ScreenPower::instance();
+    /* Takes programs' requests not to blank or lock (a video, a call);
+     * before the lock, which honours them. */
+    IdleInhibitor::instance();
     /* Locks on idle and before sleep, per lock.conf. */
     ScreenLock::instance();
     /* Turns Num Lock on, once per X session, per keyboard.conf. */

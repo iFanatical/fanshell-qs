@@ -3,6 +3,8 @@
 #include <QMouseEvent>
 #include <QTimer>
 
+#include <cstring>
+
 #include <pulse/pulseaudio.h>
 
 /* ------------------------------------------------------------ PulseBackend */
@@ -42,18 +44,66 @@ struct PulseCallbacks {
                 c,
                 (pa_subscription_mask_t)(PA_SUBSCRIPTION_MASK_SINK
                                          | PA_SUBSCRIPTION_MASK_SOURCE
-                                         | PA_SUBSCRIPTION_MASK_SERVER),
+                                         | PA_SUBSCRIPTION_MASK_SERVER
+                                         | PA_SUBSCRIPTION_MASK_SINK_INPUT),
                 nullptr, nullptr);
             if (o)
                 pa_operation_unref(o);
             queryAll(self);
+            querySinkInputs(self);
         }
     }
 
-    static void subscribe(pa_context *, pa_subscription_event_type_t, uint32_t,
+    static void subscribe(pa_context *, pa_subscription_event_type_t t, uint32_t,
                           void *ud)
     {
-        queryAll(static_cast<PulseBackend *>(ud));
+        auto *self = static_cast<PulseBackend *>(ud);
+        if ((t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK)
+            == PA_SUBSCRIPTION_EVENT_SINK_INPUT)
+            querySinkInputs(self);
+        else
+            queryAll(self);
+    }
+
+    static void querySinkInputs(PulseBackend *self)
+    {
+        pa_operation *o = pa_context_get_sink_input_info_list(
+            self->d->ctx, sinkInputList, self);
+        if (o)
+            pa_operation_unref(o);
+    }
+
+    static void sinkInputList(pa_context *, const pa_sink_input_info *i,
+                              int eol, void *ud)
+    {
+        auto *self = static_cast<PulseBackend *>(ud);
+        static thread_local QStringList pending;
+        if (eol) {
+            QStringList list = pending;
+            pending.clear();
+            list.removeDuplicates();
+            list.sort();
+            QMetaObject::invokeMethod(
+                self,
+                [self, list]() {
+                    self->playingKnown = true;
+                    if (self->playing == list)
+                        return;
+                    self->playing = list;
+                    emit self->playingChanged();
+                },
+                Qt::QueuedConnection);
+            return;
+        }
+        if (!i || i->corked || i->client == PA_INVALID_INDEX)
+            return;
+        const char *virt = pa_proplist_gets(i->proplist, "node.virtual");
+        if (virt && !strcmp(virt, "true"))
+            return;
+        const char *name = pa_proplist_gets(i->proplist, PA_PROP_APPLICATION_NAME);
+        if (!name)
+            name = pa_proplist_gets(i->proplist, PA_PROP_APPLICATION_PROCESS_BINARY);
+        pending << QString::fromUtf8(name ? name : "audio");
     }
 
     static void queryAll(PulseBackend *self)

@@ -33,6 +33,12 @@ public:
     bool sourceMuted = false;
     bool hasSource = false;
     QVector<Sink> sinks;
+    /* Programs with an audio stream playing now (not paused), by name.
+     * Streams no program owns -- loopbacks and virtual devices, which are
+     * always open -- are left out. Changes emit playingChanged(). */
+    QStringList playing;
+    /* The server has answered with its streams at least once. */
+    bool playingKnown = false;
 
     void setSinkVolume(qreal v);
     void setSinkMuted(bool m);
@@ -44,6 +50,7 @@ public:
 
 signals:
     void changed();
+    void playingChanged();
 
 private:
     explicit PulseBackend(QObject *parent = nullptr);
