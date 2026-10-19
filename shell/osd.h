@@ -16,6 +16,9 @@ class HardwareOsd : public QWidget {
     Q_OBJECT
 public:
     static HardwareOsd *instance();
+    /* Nothing is shown while set: the screen is locked, and the OSD would
+     * either cover the lock screen or fight it for the top. */
+    static void setSuppressed(bool suppressed);
     bool showNotification(uint id, const QString &appName,
                           const QString &summary, const QString &body,
                           const QVariantMap &hints, int urgency);
@@ -43,6 +46,8 @@ private:
 
     explicit HardwareOsd(QWidget *parent = nullptr);
     void present();
+
+    static bool s_suppressed;
     void configureFor(QScreen *screen);
     void drawIcon(QPainter &p, const QRectF &rect) const;
 

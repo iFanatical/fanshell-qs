@@ -5,7 +5,9 @@
  *   fanshell-qs-shell ipc call <target> <fn>  poke a running instance
  *                    (targets: shell, launcher, runner, emoji, notifications,
  *                     audio, brightness, media, vpn, wallpaper, menu,
- *                     outputs, dpms, lock, keyboard, mouse, controlpanel) */
+ *                     outputs, dpms, lock, nightlight, keyboard, mouse,
+ *                     controlpanel)
+ *   fanshell-qs-shell lock                    lock the screen (lockscreen.h) */
 #include <QApplication>
 #include <QHash>
 #include <QScreen>
@@ -19,9 +21,13 @@
 #include "keyboard.h"
 #include "mouse.h"
 #include "launcher.h"
+#include "lockscreen.h"
 #include "media.h"
+#include "nightlight.h"
 #include "notification.h"
+#include "osd.h"
 #include "panel.h"
+#include "popup.h"
 #include "vibrance.h"
 #include "wallpaper.h"
 #include "pills.h"
@@ -47,6 +53,9 @@ int main(int argc, char *argv[])
         }
         return IpcServer::call(a[0], a[1]);
     }
+    /* Its own processes, with their own QApplication. */
+    if (!rawArgs.isEmpty() && rawArgs[0] == QLatin1String("lock"))
+        return LockScreen::run(argc, argv);
 
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("fanshell-qs-shell"));
@@ -117,11 +126,35 @@ int main(int argc, char *argv[])
      * before the lock, which honours them. */
     IdleInhibitor::instance();
     /* Locks on idle and before sleep, per lock.conf. */
-    ScreenLock::instance();
+    ScreenLock *lock = ScreenLock::instance();
+    /* Warms the colours after sunset, per nightlight.conf. */
+    NightLight::instance();
     /* Turns Num Lock on, once per X session, per keyboard.conf. */
     KeyboardSettings::instance();
     /* Applies the saved pointer settings, and again on hotplug. */
     MouseSettings::instance();
+
+    /* The lock screen grabs the keyboard, so what holds it goes first; and
+     * nothing of the shell's shows over it. */
+    QObject::connect(lock, &ScreenLock::aboutToLock, launcher, [launcher]() {
+        launcher->hideLauncher();
+        WallpaperPicker::instance()->hidePicker();
+        PopupManager::closeCurrent();
+        ControlPanel::instance()->hideWindow();
+        DisplaySettings::instance()->hideWindow();
+        ScreenPower::instance()->hideWindow();
+        ScreenLock::instance()->hideWindow();
+        NightLight::instance()->hideWindow();
+        KeyboardSettings::instance()->hideWindow();
+        MouseSettings::instance()->hideWindow();
+    });
+    auto onLocked = [](bool locked) {
+        NotificationService::instance()->setLocked(locked);
+        HardwareOsd::setSuppressed(locked);
+    };
+    QObject::connect(lock, &ScreenLock::lockedChanged, &app, onLocked);
+    if (lock->locked())
+        onLocked(true);
 
     auto *ipc = new IpcServer(&app);
     ipc->handle(QStringLiteral("menu"), QStringLiteral("toggle"),
@@ -239,6 +272,25 @@ int main(int argc, char *argv[])
                 []() { ScreenLock::instance()->hideWindow(); });
     ipc->handle(QStringLiteral("lock"), QStringLiteral("now"),
                 []() { ScreenLock::instance()->lockNow(); });
+    /* From the lock screen itself. */
+    ipc->handle(QStringLiteral("lock"), QStringLiteral("locked"),
+                []() { ScreenLock::instance()->setLocked(true); });
+    ipc->handle(QStringLiteral("lock"), QStringLiteral("unlocked"),
+                []() { ScreenLock::instance()->setLocked(false); });
+    ipc->handle(QStringLiteral("nightlight"), QStringLiteral("toggle"),
+                []() { NightLight::instance()->toggleWindow(); });
+    ipc->handle(QStringLiteral("nightlight"), QStringLiteral("show"),
+                []() { NightLight::instance()->openWindow(); });
+    ipc->handle(QStringLiteral("nightlight"), QStringLiteral("hide"),
+                []() { NightLight::instance()->hideWindow(); });
+    ipc->handle(QStringLiteral("nightlight"), QStringLiteral("enable"),
+                []() { NightLight::instance()->setEnabled(true); });
+    ipc->handle(QStringLiteral("nightlight"), QStringLiteral("disable"),
+                []() { NightLight::instance()->setEnabled(false); });
+    ipc->handle(QStringLiteral("nightlight"), QStringLiteral("toggle-enabled"), []() {
+        NightLight *n = NightLight::instance();
+        n->setEnabled(!n->settings().enabled);
+    });
     ipc->handle(QStringLiteral("wallpaper"), QStringLiteral("toggle"),
                 []() { WallpaperPicker::instance()->togglePicker(); });
     ipc->handle(QStringLiteral("wallpaper"), QStringLiteral("show"),

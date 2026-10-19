@@ -7,7 +7,7 @@
 set -eu
 
 lock() {
-	# Themed i3lock-color, or whatever locker is installed: see that script.
+	# The shell's lock screen, or whatever locker is installed: see that script.
 	exec fanshell-qs-lock
 }
 

@@ -1,67 +1,28 @@
 #!/bin/sh
-# fanshell-qs-lock — lock the screen, in Tokyo Night colours over a blurred
-# copy of the desktop.
+# fanshell-qs-lock — lock the screen.
 #
 # Used by the Lock button, the shell's lock on idle and lock before suspend.
-# It returns once the screen is locked (i3lock forks only after it has
-# grabbed the keyboard and pointer), so the shell can hold suspend until then.
-# Locking twice does nothing.
+# It returns once the screen is locked, so the shell can hold suspend until
+# then. Locking twice does nothing.
 #
-# With i3lock-color (tools/install-i3lock-color, or Gentoo's
-# x11-misc/i3lock-color) the screen is blurred and the ring, clock and text
-# are themed. Stock i3lock can only fill the screen with one colour, so it
-# gets the bar's background. Without i3lock, other lockers are tried as the
-# power script always did.
+# The lock screen is fanshell-qs-shell's own (`fanshell-qs-shell lock`; see
+# shell/lockscreen.h): the clock over the blurred wallpaper, a password
+# field, media controls. It needs a PAM service, /etc/pam.d/fanshell-qs-lock
+# (tools/install-shell installs it) or i3lock's; when it cannot lock here at
+# all it says so with status 2, and other lockers are tried instead.
 set -eu
 
-# Tokyo Night (RRGGBB; i3lock-color takes an optional AA alpha).
-bg=1a1b26
-fg=c0caf5
-fg_dim=a9b1d6
-comment=565f89
-blue=7aa2f7
-cyan=7dcfff
-magenta=bb9af7
-red=f7768e
-yellow=e0af68
-font='JetBrainsMono Nerd Font Propo'
-
-if pgrep -u "$(id -u)" -x i3lock >/dev/null 2>&1; then
-	exit 0
+if command -v fanshell-qs-shell >/dev/null 2>&1; then
+	status=0
+	fanshell-qs-shell lock || status=$?
+	# 1: it could not grab the keyboard or pointer; another locker could not
+	# either.
+	[ "$status" -eq 2 ] || exit "$status"
 fi
 
 if command -v i3lock >/dev/null 2>&1; then
-	case $(i3lock --version 2>&1) in
-	*.c.*)
-		exec i3lock --ignore-empty-password --show-failed-attempts \
-			--pass-media-keys --pass-volume-keys --pass-screen-keys \
-			--blur 8 --color "${bg}ff" \
-			--indicator --radius 110 --ring-width 8 \
-			--inside-color "${bg}cc" --ring-color "${comment}ff" \
-			--line-uses-inside --separator-color 00000000 \
-			--keyhl-color "${blue}ff" --bshl-color "${yellow}ff" \
-			--insidever-color "${bg}cc" --ringver-color "${cyan}ff" \
-			--insidewrong-color "${bg}cc" --ringwrong-color "${red}ff" \
-			--clock --time-str '%H:%M' --date-str '%A, %d %B' \
-			--time-color "${fg}ff" --date-color "${fg_dim}ff" \
-			--time-font "$font" --date-font "$font" \
-			--time-size 34 --date-size 14 \
-			--verif-text 'Checking…' --wrong-text 'Wrong password' \
-			--noinput-text 'No input' --lock-text 'Locking…' \
-			--lockfailed-text 'Lock failed' \
-			--verif-color "${cyan}ff" --wrong-color "${red}ff" \
-			--verif-font "$font" --wrong-font "$font" \
-			--verif-size 16 --wrong-size 16 \
-			--modif-color "${magenta}ff" \
-			--layout-color "${fg_dim}ff" --layout-font "$font"
-		;;
-	*)
-		exec i3lock --ignore-empty-password --show-failed-attempts \
-			--color "$bg"
-		;;
-	esac
+	exec i3lock --ignore-empty-password --show-failed-attempts --color 1a1b26
 fi
-
 for locker in xsecurelock slock; do
 	if command -v "$locker" >/dev/null 2>&1; then
 		"$locker" &

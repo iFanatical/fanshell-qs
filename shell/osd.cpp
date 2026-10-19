@@ -191,8 +191,19 @@ void HardwareOsd::showMediaUnavailable()
     present();
 }
 
+bool HardwareOsd::s_suppressed = false;
+
+void HardwareOsd::setSuppressed(bool suppressed)
+{
+    s_suppressed = suppressed;
+    if (suppressed)
+        instance()->hide();
+}
+
 void HardwareOsd::present()
 {
+    if (s_suppressed)
+        return;
     configureFor(trayScreen());
     show();
     raise();

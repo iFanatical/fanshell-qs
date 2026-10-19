@@ -1,0 +1,5 @@
+#%PAM-1.0
+# fanshell-qs's lock screen (`fanshell-qs-shell lock`): the password is
+# checked the way a console login checks it. Installed to
+# /etc/pam.d/fanshell-qs-lock by tools/install-shell.
+auth include login

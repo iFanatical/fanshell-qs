@@ -8,8 +8,9 @@
 # it as yourself: the build and the $HOME links stay yours, and only the
 # install into /usr/local and the removal of old files use sudo.
 #
-#   1. check the build dependencies (pkg-config)
-#   2. make, then sudo make install
+#   1. check the build dependencies (pkg-config, PAM's header)
+#   2. make, then sudo make install, and the lock screen's PAM service into
+#      /etc/pam.d when it is missing or changed
 #   3. tools/link-config (sxhkdrc, picom.conf, alacritty.toml, ...)
 #   4. in a running X session, replace the running bar with the new build
 #      (also the fanoxwm-qs-shell from before the split) and reload sxhkd
@@ -32,11 +33,14 @@ for pkg in Qt6Widgets Qt6Gui Qt6Core Qt6DBus Qt6Network libpulse xcb \
            xdamage xfixes xkbfile; do
     pkg-config --exists "$pkg" || missing="$missing $pkg"
 done
+# PAM has no pkg-config file everywhere; look for its header instead.
+printf '#include <security/pam_appl.h>\n' | ${CXX:-g++} -E -x c++ - >/dev/null 2>&1 \
+    || missing="$missing pam"
 if [ -n "$missing" ]; then
     printf 'missing:%s\n' "$missing" >&2
     printf 'Fedora:  sudo dnf install qt6-qtbase-devel pulseaudio-libs-devel libxcb-devel \\\n' >&2
     printf '             libX11-devel libXcomposite-devel libXdamage-devel libXfixes-devel \\\n' >&2
-    printf '             libxkbfile-devel\n' >&2
+    printf '             libxkbfile-devel pam-devel\n' >&2
     printf 'Gentoo:  see the Requirements section of %s/README.md\n' "$repo" >&2
     exit 1
 fi
@@ -47,6 +51,13 @@ run make -C "$repo"
 
 step "fanshell-qs: installing into $prefix/bin"
 run sudo make -C "$repo" install PREFIX="$prefix"
+
+step "fanshell-qs: installing the lock screen's PAM service"
+if cmp -s "$repo/config/pam.d/fanshell-qs-lock" /etc/pam.d/fanshell-qs-lock; then
+    echo "ok      /etc/pam.d/fanshell-qs-lock"
+else
+    run sudo make -C "$repo" install-pam
+fi
 
 step "fanshell-qs: linking config files"
 run "$repo/tools/link-config"

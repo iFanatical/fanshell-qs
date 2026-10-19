@@ -145,8 +145,9 @@ private:
 };
 
 /* Locking the screen on its own: after a stretch of idle, and before the
- * machine sleeps. The lock itself is scripts/fanshell-qs-lock (i3lock-color,
- * themed and blurred). Configured from Control Panel > Screen lock:
+ * machine sleeps. The lock itself is scripts/fanshell-qs-lock, which runs
+ * this binary's lock screen (lockscreen.h). Configured from Control Panel >
+ * Screen lock:
  *
  *     fanshell-qs-shell ipc call lock toggle|show|hide|now
  *
@@ -154,7 +155,13 @@ private:
  * it is independent of blanking. Lock before suspend holds a logind "delay"
  * inhibitor and releases it once the screen is locked. Settings are saved to
  * lock.conf in Paths::configDir(); without one, the screen locks after 10
- * minutes idle, before suspend, and not while a window is fullscreen. */
+ * minutes idle, before suspend, and not while a window is fullscreen, and
+ * the lock screen powers the displays down after 5 minutes.
+ *
+ * The lock screen tells the shell when it locks and unlocks (`lock locked`,
+ * `lock unlocked` on the control socket), and the shell watches the lock
+ * file too, so it knows even after restarting; while locked it shows no
+ * toasts or OSDs. */
 class ScreenLockWindow;
 class QProcess;
 
@@ -168,6 +175,9 @@ public:
                                        fullscreen (video, games) */
         bool skipAudio = true;      /* not while a program plays audio
                                        (music, a call, a video) */
+        int displayOff = 300;       /* seconds on the lock screen without
+                                       input before the displays power
+                                       down; 0 = never */
     };
 
     static ScreenLock *instance();
@@ -186,9 +196,16 @@ public:
      * (idleinhibit.h), audio playing -- or empty. */
     QStringList pausedBy() const;
 
+    bool locked() const { return m_locked; }
+    /* The lock screen's word, or what the lock file says. */
+    void setLocked(bool locked);
+
 signals:
+    /* About to lock: anything holding a keyboard grab should let go. */
+    void aboutToLock();
     /* fanshell-qs-lock has returned: the screen is locked, or it failed. */
     void lockerDone();
+    void lockedChanged(bool locked);
 
 private slots:
     void prepareForSleep(bool sleeping);
@@ -208,6 +225,9 @@ private:
     QElapsedTimer m_age;
     QProcess *m_locker = nullptr;
     int m_sleepFd = -1;
+    bool m_locked = false;
+    /* While locked: the lock file, for a lock screen gone without a word. */
+    QTimer m_lockWatch;
 };
 
 #endif

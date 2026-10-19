@@ -24,8 +24,8 @@ in one repo, and from fanhypr-qs `9ea1f08` before that.
 ├── fanshell-qs/             this repo: the shell, used by both sessions
 │   ├── shell/                the Qt shell
 │   ├── scripts/fanshell-qs-* helper scripts the widgets exec
-│   ├── tools/                link-config, i3lock-color and RAPL installers
-│   └── config/               sxhkdrc, picom.conf, alacritty.toml, websites.json, output defaults
+│   ├── tools/                link-config, install-shell and the RAPL installer
+│   └── config/               sxhkdrc, picom.conf, alacritty.toml, websites.json, output defaults, PAM service
 ├── fanoxwm-qs/               the oxwm session
 ├── fanqtile-qs/              the qtile session
 └── oxwm/                     upstream oxwm, read by fanoxwm-qs's build
@@ -45,7 +45,7 @@ are the optional features listed under [Requirements](#requirements).
 ```sh
 sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config \
     qt6-qtbase-devel libxcb-devel libX11-devel libXcomposite-devel \
-    libXdamage-devel libXfixes-devel libxkbfile-devel pulseaudio-libs-devel \
+    libXdamage-devel libXfixes-devel libxkbfile-devel pulseaudio-libs-devel pam-devel \
     zig libXft-devel libXinerama-devel fontconfig-devel \
     xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd \
     jq xdotool xprop feh NetworkManager bluez brightnessctl \
@@ -94,9 +94,7 @@ needs the network) and `oxwmctl`, installs them and the oxwm scripts into
 then builds, installs and links the shell. A real file in the way of a link
 is moved to `NAME.bak-DATE`, never overwritten.
 
-Optional, from this repo's `tools/`: `install-i3lock-color` for the themed
-lock screen (its header lists the packages it needs to build; without it
-the lock screen is a plain colour), and `sudo ./install-rapl-udev.sh` for
+Optional, from this repo's `tools/`: `sudo ./install-rapl-udev.sh` for
 CPU wattage in the power pill.
 
 **5. Log in.** `startx` from a text console starts oxwm, which starts the
@@ -116,7 +114,7 @@ bar.
   (`cargo install xcolor`), plus xclip and notify-send;
 - the rest of your dotfiles: `~/.zshrc`, nvim;
 - `~/.config/fanshell-qs`, the shell's saved settings (wallpaper,
-  vibrance, display layouts, screen power and lock). It starts empty with
+  vibrance, display layouts, screen power, lock and night light). It starts empty with
   defaults; copy it from another machine to keep the same choices.
 
 **Switching to qtile** later: `sudo dnf install qtile` (Gentoo:
@@ -126,8 +124,7 @@ fanoxwm-qs switches back. fanqtile-qs's README lists what else the qtile
 side uses.
 
 **On Gentoo**, the steps are the same with the `emerge` lines under
-[Installing](#installing) and in fanoxwm-qs's README, and
-`x11-misc/i3lock-color` from portage instead of `install-i3lock-color`.
+[Installing](#installing) and in fanoxwm-qs's README.
 
 ## Window managers
 
@@ -162,7 +159,8 @@ manager itself, and what it needs to build, is listed in its own repo.
 |---|---|---|---|
 | C/C++ toolchain | `gcc` `gcc-c++` `make` `pkgconf-pkg-config` | `sys-devel/gcc` `dev-build/make` `dev-util/pkgconf` | building the shell |
 | Qt 6 base | `qt6-qtbase-devel` | `dev-qt/qtbase` (USE `dbus gui network widgets X`) | the shell: widgets, D-Bus, sockets, and the xcb platform plugin |
-| libxcb (with RandR, DPMS, the screen saver extension, XKB and XInput) | `libxcb-devel` | `x11-libs/libxcb` | the panel's dock surface, the Displays popup, digital vibrance, Screen power, lock on idle, the Keyboard settings |
+| libxcb (with RandR, DPMS, the screen saver extension, XKB and XInput) | `libxcb-devel` | `x11-libs/libxcb` | the panel's dock surface, the Displays popup, digital vibrance, night light, Screen power, the lock screen and lock on idle, the Keyboard settings |
+| PAM | `pam-devel` | `sys-libs/pam` | checking the password on the lock screen; `tools/install-shell` installs its service, `/etc/pam.d/fanshell-qs-lock` |
 | libxkbfile | `libxkbfile-devel` | `x11-libs/libxkbfile` | the Keyboard settings' Caps Lock and Compose options, read from the XKB rules as setxkbmap does (it is also what X's own `xkbcomp` uses, so it is usually there already) |
 | X11, XComposite, XDamage, XFixes | `libX11-devel` `libXcomposite-devel` `libXdamage-devel` `libXfixes-devel` | `x11-libs/libX11` `x11-libs/libXcomposite` `x11-libs/libXdamage` `x11-libs/libXfixes` | the XEmbed tray |
 | libpulse | `pulseaudio-libs-devel` | `media-libs/libpulse` | volume and microphone control; works against pipewire-pulse |
@@ -188,9 +186,8 @@ out or empty.
 | power-profiles-daemon | `power-profiles-daemon` | `sys-power/power-profiles-daemon` | the System dropdown's power-profile selector |
 | wireguard-tools | `wireguard-tools` | `net-vpn/wireguard-tools` | the VPN pill; `wg-quick` runs through passwordless `sudo -n` |
 | net-snmp | `net-snmp-utils` | `net-analyzer/net-snmp` | UPS wattage in the power pill, when `ups.host` is set (see [UPS](#ups)) |
-| curl | `curl` | `net-misc/curl` | the weather pill (wttr.in) |
+| curl | `curl` | `net-misc/curl` | the weather pill and the lock screen's weather (wttr.in) |
 | pw-play or paplay | `pipewire-utils` or `pulseaudio-utils` | `media-video/pipewire` | the optional volume-change sound |
-| i3lock-color | `tools/install-i3lock-color` (not packaged) | `x11-misc/i3lock-color` | the themed, blurred lock screen (`fanshell-qs-lock`), for the Lock button, lock on idle and lock before sleep. Stock `i3lock` gives a plain Tokyo Night background instead; without either, xsecurelock, slock, xscreensaver and then `loginctl lock-session` are tried |
 | A terminal | `alacritty` or `xterm` | `x11-terms/alacritty` or `x11-terms/xterm` | `Terminal=true` launcher entries and the menu's actions (`$TERMINAL`, then alacritty for the menu, xterm for the launcher) |
 | xdg-utils | `xdg-utils` | `x11-misc/xdg-utils` | the menu opening URLs and files |
 
@@ -217,13 +214,13 @@ Required:
 # Fedora
 sudo dnf install gcc gcc-c++ make pkgconf-pkg-config \
     qt6-qtbase-devel libxcb-devel libX11-devel libXcomposite-devel \
-    libXdamage-devel libXfixes-devel libxkbfile-devel pulseaudio-libs-devel \
+    libXdamage-devel libXfixes-devel libxkbfile-devel pulseaudio-libs-devel pam-devel \
     xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd
 
 # Gentoo
 sudo emerge dev-qt/qtbase x11-libs/libxcb x11-libs/libX11 \
     x11-libs/libXcomposite \
-    x11-libs/libXdamage x11-libs/libXfixes x11-libs/libxkbfile media-libs/libpulse \
+    x11-libs/libXdamage x11-libs/libXfixes x11-libs/libxkbfile media-libs/libpulse sys-libs/pam \
     x11-base/xorg-server x11-apps/xinit x11-misc/picom x11-apps/xrandr \
     x11-misc/sxhkd
 ```
@@ -236,7 +233,6 @@ sudo dnf install feh NetworkManager bluez \
     brightnessctl ddcutil power-profiles-daemon wireguard-tools \
     net-snmp-utils curl pipewire-utils alacritty xdg-utils \
     xsetroot xsettingsd mate-polkit
-tools/install-i3lock-color   # builds it; needs the deps listed in its header
 
 # Gentoo
 sudo emerge media-gfx/feh \
@@ -245,7 +241,7 @@ sudo emerge media-gfx/feh \
     net-vpn/wireguard-tools net-analyzer/net-snmp net-misc/curl \
     media-video/pipewire x11-terms/alacritty \
     x11-misc/xdg-utils x11-apps/xsetroot \
-    x11-misc/xsettingsd mate-extra/mate-polkit x11-misc/i3lock-color
+    x11-misc/xsettingsd mate-extra/mate-polkit
 ```
 
 ## Build
@@ -325,7 +321,8 @@ cache loses nothing you chose:
 | `vibrance.conf` | digital vibrance per output; re-applied at start and when an output connects |
 | `outputs.conf` | output layouts, one per set of connected outputs; applied at login (`fanshell-qs-session`) and on hotplug |
 | `dpms.conf` | screen blanking and DPMS timeouts; applied at startup |
-| `lock.conf` | lock on idle, before sleep, and the fullscreen and audio pauses |
+| `lock.conf` | lock on idle, before sleep, the fullscreen and audio pauses, and display off when locked |
+| `nightlight.conf` | night light on or off, its temperatures, and the location it was last found at |
 | `keyboard.conf` | key repeat, Caps Lock and Compose keys, Num Lock at login, lock OSD, backlight timeout |
 | `mouse.conf` | pointer settings per device, by name |
 | `websites.json` | linked from the repo (above) |
@@ -347,8 +344,8 @@ in the caption below the row as you point at them; the last three ask for a
 second click). Settings live in the **Control Panel**, opened from the
 dropdown's header (or `ipc call controlpanel toggle`). It is a grid of
 tiles, each showing a line of live status and opening its own window:
-Displays, Screen power, Screen lock, Keyboard, Mouse & touchpad and
-Wallpaper. A new settings window
+Displays, Screen power, Screen lock, Keyboard, Mouse & touchpad,
+Wallpaper and Night light. A new settings window
 becomes a tile in `shell/controlpanel.cpp`.
 
 ### Displays
@@ -394,13 +391,53 @@ transformation matrix) directly over xcb, so there is nothing extra to
 install. Outputs whose driver has no `CTM` property, notably NVIDIA's
 proprietary one, get no slider.
 
+### Night light
+
+**Night light** in the Control Panel (or `ipc call nightlight toggle`)
+warms the screen's colours after sunset, as redshift or f.lux do. It follows
+the sun where the machine is: full day while the sun is 3° or more above
+the horizon, full night once it is 6° below, and in between with the sun's
+height, about 40 minutes at mid latitudes. Night defaults to 4500 K and day
+to 6500 K (normal colours); both are drop-downs. The location is looked up
+from your IP address at wttr.in once per session, as the weather is, and
+the last one found is kept for when the network is not up. Set
+`location=manual` with `latitude=` and `longitude=` in `nightlight.conf` to
+fix it instead (a VPN would otherwise move you). Until a location has been
+found, it warms from 19:30 to 20:30 and returns from 06:30 to 07:30.
+
+`ipc call nightlight enable`, `disable` and `toggle-enabled` switch it from
+a key binding. It sets the outputs' RandR gamma ramps, so it works on
+NVIDIA's proprietary driver too, and stacks with digital vibrance (the CTM,
+applied before the ramps). They are written again after any RandR change,
+since a modeset can reset them, and set back to normal when the shell
+quits. Don't run redshift or gammastep alongside it: they would fight over
+the ramps.
+
 ### Screen lock
 
-The Lock button, and every automatic lock, run `fanshell-qs-lock`: i3lock-color
-over a blurred copy of the screen, with the ring, clock and messages in Tokyo
-Night colours (the palette is at the top of the script). There is no password
-box; the ring lights up as you type, turns cyan while checking and red on a
-wrong password.
+The Lock button, and every automatic lock, run `fanshell-qs-lock`, which
+runs the shell's own lock screen, `fanshell-qs-shell lock`. It shows the
+time and date over the blurred wallpaper, the weather (bottom left), the
+uptime (bottom right), the battery on a laptop (top right), and the playing
+music with its cover and previous/play/next buttons. A key or click brings
+up your name and picture (`~/.face`, or AccountsService's), and a password
+field. Escape goes back to the clock, as does half a minute without input.
+Caps Lock and a wrong password are shown under the field. The volume,
+brightness and media keys keep working, but no notification or OSD shows
+while locked.
+
+The password is checked by PAM, through `/etc/pam.d/fanshell-qs-lock`
+(`config/pam.d/fanshell-qs-lock`, which `tools/install-shell` installs; it
+defers to `login`), or i3lock's service when that is missing. With neither
+it refuses to lock, and the script falls back to i3lock, xsecurelock, slock,
+xscreensaver and then `loginctl lock-session`.
+
+The lock screen is the shell's binary but a process of its own, so the bar
+crashing never unlocks the session. A small supervisor (`fanshell-lock` in
+`ps`) holds a lock file in `$XDG_RUNTIME_DIR` while locked, and starts the
+lock screen again at once if it ever dies without the password having been
+typed. `pkill -x fanshell-lock` from another VT ends it, as killing i3lock
+would.
 
 **Screen lock** in the Control Panel (or `ipc call lock toggle`) sets when
 the screen locks by itself:
@@ -419,6 +456,17 @@ the screen locks by itself:
   (loopbacks and virtual devices, which are always open) don't count, but
   a game with its sound on does. The window shows what is holding the
   lock off at the moment.
+- **Display off when locked**: how long the lock screen stays lit without
+  input before it powers the displays down (DPMS), 5 minutes by default.
+  It counts from the last key or pointer move on the lock screen, and
+  applies even while a program has asked the screen not to blank.
+
+Screen power's blanking and DPMS timers are the X server's own and count
+from the last input as well, whether or not the screen is locked. Whichever
+is set shorter acts first: if the screen blanks before the lock time, the
+lock still comes on behind the dark screen. The pauses above only hold off
+the lock; with music playing, the screen still blanks on Screen power's
+schedule.
 
 Programs can also ask for it themselves: the shell answers
 `org.freedesktop.ScreenSaver` on the session bus (`Inhibit`/`UnInhibit`),
@@ -430,7 +478,8 @@ requests.
 
 `ipc call lock now` locks straight away. Settings are saved to `lock.conf`;
 without one, the screen locks after 10 minutes, before sleep, and pauses for
-fullscreen and while audio plays.
+fullscreen and while audio plays, and the lock screen turns the displays
+off after 5 minutes.
 
 ### Keyboard
 
@@ -548,7 +597,7 @@ ups.community=public
 
 The other files in `~/.config/fanshell-qs` (`wallpaper.conf`,
 `vibrance.conf`, `outputs.conf`, `dpms.conf`, `lock.conf`, `keyboard.conf`,
-`mouse.conf`) are written by
+`mouse.conf`, `nightlight.conf`) are written by
 the shell's popups; edit those settings there.
 
 One environment variable remains, because it is about the window manager

@@ -10,6 +10,7 @@
 #include "displays.h"
 #include "keyboard.h"
 #include "mouse.h"
+#include "nightlight.h"
 #include "overlay.h"
 #include "paths.h"
 #include "wallpaper.h"
@@ -151,6 +152,9 @@ public:
         m_wallpaper = add(U'\U000F0E09', QStringLiteral("Wallpaper"), []() {
             WallpaperPicker::instance()->openPicker();
         });
+        m_night = add(U'\U000F0594', QStringLiteral("Night light"), []() {
+            NightLight::instance()->openWindow();
+        });
     }
 
     void open()
@@ -210,6 +214,13 @@ private:
                                  .value(QStringLiteral("path"));
         m_wallpaper->setStatus(path.isEmpty() ? QStringLiteral("None set")
                                               : QFileInfo(path).completeBaseName());
+
+        const NightLight *night = NightLight::instance();
+        m_night->setStatus(night->settings().enabled
+                               ? QStringLiteral("Now %1 K · %2")
+                                     .arg(night->target())
+                                     .arg(night->nextChange())
+                               : QStringLiteral("Off"));
     }
 
     QVector<Tile *> m_tiles;
@@ -219,6 +230,7 @@ private:
     Tile *m_keyboard;
     Tile *m_mouse;
     Tile *m_wallpaper;
+    Tile *m_night;
 };
 
 ControlPanel *ControlPanel::instance()

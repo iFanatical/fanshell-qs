@@ -19,6 +19,23 @@ public:
     void previous();
     void next();
 
+    /* The player the play/pause key would act on, for the lock screen's
+     * controls; an empty title when none is playing or paused. */
+    struct NowPlaying {
+        QString title;
+        QString artist;
+        QString artUrl;
+        bool playing = false;
+        bool canPlayPause = false;
+        bool canPrevious = false;
+        bool canNext = false;
+    };
+    NowPlaying nowPlaying() const;
+
+signals:
+    /* A player came, went or changed what it plays. */
+    void changed();
+
 private slots:
     void serviceOwnerChanged(const QString &name, const QString &oldOwner,
                              const QString &newOwner);
@@ -33,6 +50,7 @@ private:
         QString status;
         QString title;
         QString artist;
+        QString artUrl;
         bool canPlayPause = true;
         bool canPrevious = true;
         bool canNext = true;

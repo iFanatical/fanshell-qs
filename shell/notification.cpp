@@ -831,7 +831,7 @@ uint NotificationService::Notify(const QString &appName, uint replacesId,
             n.senderPid = pid.value();
     }
     applyStyle(n, expireTimeout);
-    n.visible = !m_dnd || n.urgency == 2;
+    n.visible = !m_locked && (!m_dnd || n.urgency == 2);
 
     if (replaceAt >= 0)
         m_history.removeAt(replaceAt);
@@ -1066,6 +1066,20 @@ void NotificationService::setDnd(bool enabled)
     }
     emit changed();
     scheduleExpiry();
+}
+
+void NotificationService::setLocked(bool locked)
+{
+    if (m_locked == locked)
+        return;
+    m_locked = locked;
+    if (m_locked) {
+        tick();
+        for (Notification &n : m_history)
+            n.visible = false;
+        emit changed();
+        scheduleExpiry();
+    }
 }
 
 NotificationWidget::NotificationWidget(QWidget *parent) : BarPill(parent)

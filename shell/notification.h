@@ -54,6 +54,9 @@ public:
 
     void toggleDnd();
     void setDnd(bool enabled);
+    /* While the screen is locked no toast is shown, urgent ones included:
+     * they would show over the lock screen. They stay in the history. */
+    void setLocked(bool locked);
     void setHovered(uint id);
     void dismiss(uint id, uint reason = 2);
     void clearAll();
@@ -88,6 +91,7 @@ private:
     uint m_nextId = 1;
     uint m_hovered = 0;
     bool m_dnd = false;
+    bool m_locked = false;
     bool m_started = false;
     qint64 m_lastTick = 0;
     QTimer *m_expiryTimer = nullptr;

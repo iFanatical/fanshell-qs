@@ -38,6 +38,8 @@
 
 #include "wmstate.h"
 #include "idleinhibit.h"
+#include "lockscreen.h"
+#include "nightlight.h"
 #include "overlay.h"
 #include "paths.h"
 #include "popup.h"
@@ -1144,6 +1146,8 @@ void DisplaySettings::randrEvent()
  * layout's own changes also land here, but leave the key as it was. */
 void DisplaySettings::settle()
 {
+    /* A modeset can reset the gamma ramps. */
+    NightLight::instance()->refresh();
     if (m_win)
         m_win->outputsSettled();
     const QString key = Displays::key(Displays::query());
@@ -1696,6 +1700,11 @@ public:
         grid->addWidget(fieldLabel(QStringLiteral("Pause while audio plays"), box()),
                         3, 0);
         grid->addWidget(toggleRow(&m_audio), 3, 1);
+        grid->addWidget(new HLine(box()), 4, 0, 1, 2);
+        m_displayOff = new Selector(choiceList(), box());
+        grid->addWidget(fieldLabel(QStringLiteral("Display off when locked"), box()),
+                        5, 0);
+        grid->addWidget(m_displayOff, 5, 1);
         lay->addLayout(grid);
 
         m_pausedNow = new TextItem(box());
@@ -1712,7 +1721,9 @@ public:
                                  "Pause for fullscreen waits while a video or "
                                  "game fills the screen.",
                                  "Programs that ask -- a browser playing video, a "
-                                 "call -- pause it too."}) {
+                                 "call -- pause it too.",
+                                 "Display off counts from the last key or move on "
+                                 "the lock screen."}) {
             auto *t = new TextItem(note);
             t->setPixelSize(Theme::tinyFontSize);
             t->setColor(Theme::textMuted);
@@ -1741,6 +1752,14 @@ public:
             s.after = v[i];
             change(s);
         };
+        m_displayOff->chosen = [this](int i) {
+            const QVector<int> v = durationChoices(m_settings.displayOff);
+            if (i < 0 || i >= v.size())
+                return;
+            LockSettings s = m_settings;
+            s.displayOff = v[i];
+            change(s);
+        };
         connect(m_suspend, &ShellButton::activated, this, [this]() {
             LockSettings s = m_settings;
             s.beforeSuspend = !s.beforeSuspend;
@@ -1763,8 +1782,8 @@ public:
                 [this]() { if (isVisible()) sync(); });
         connect(lockNow, &ShellButton::activated, this, [this]() {
             dismiss();
-            /* After this popup has let go of the keyboard, which i3lock
-             * needs to grab. */
+            /* After this popup has let go of the keyboard, which the lock
+             * screen needs to grab. */
             QTimer::singleShot(300, ScreenLock::instance(),
                                []() { ScreenLock::instance()->lockNow(); });
         });
@@ -1788,11 +1807,15 @@ private:
 
     void sync()
     {
-        QStringList labels;
-        const QVector<int> v = durationChoices(m_settings.after);
-        for (int d : v)
-            labels << durationLabel(d);
-        m_after->setChoices(labels, int(v.indexOf(m_settings.after)));
+        auto fill = [](Selector *sel, int value) {
+            QStringList labels;
+            const QVector<int> v = durationChoices(value);
+            for (int d : v)
+                labels << durationLabel(d);
+            sel->setChoices(labels, int(v.indexOf(value)));
+        };
+        fill(m_after, m_settings.after);
+        fill(m_displayOff, m_settings.displayOff);
         auto onOff = [](ShellButton *b, bool on) {
             b->setLabel(on ? QStringLiteral("On") : QStringLiteral("Off"));
             b->setActive(on);
@@ -1814,6 +1837,7 @@ private:
 
     LockSettings m_settings;
     Selector *m_after;
+    Selector *m_displayOff;
     ShellButton *m_suspend;
     ShellButton *m_fullscreen;
     ShellButton *m_audio;
@@ -1842,6 +1866,9 @@ ScreenLock::ScreenLock(QObject *parent) : QObject(parent)
     if (conf.contains(QStringLiteral("skip_audio")))
         m_settings.skipAudio =
             conf.value(QStringLiteral("skip_audio")) == QLatin1String("on");
+    m_settings.displayOff =
+        conf.value(QStringLiteral("display_off"), QString::number(m_settings.displayOff))
+            .toInt();
 
     m_age.start();
     m_idle.setSingleShot(true);
@@ -1854,7 +1881,28 @@ ScreenLock::ScreenLock(QObject *parent) : QObject(parent)
         QStringLiteral("PrepareForSleep"), this, SLOT(prepareForSleep(bool)));
     if (m_settings.beforeSuspend)
         takeSleepInhibitor();
+
+    m_lockWatch.setInterval(1000);
+    connect(&m_lockWatch, &QTimer::timeout, this, [this]() {
+        if (!LockScreen::isLocked())
+            setLocked(false);
+    });
+    /* Locked before this shell started (it was restarted, say). */
+    if (LockScreen::isLocked())
+        setLocked(true);
     tick();
+}
+
+void ScreenLock::setLocked(bool locked)
+{
+    if (locked == m_locked)
+        return;
+    m_locked = locked;
+    if (locked)
+        m_lockWatch.start();
+    else
+        m_lockWatch.stop();
+    emit lockedChanged(locked);
 }
 
 void ScreenLock::set(const Settings &s)
@@ -1863,11 +1911,14 @@ void ScreenLock::set(const Settings &s)
     if (!Paths::writeConf(
             QLatin1String(lockConf),
             QStringLiteral("Automatic screen lock, set from the Screen lock "
-                           "popup.\nafter: seconds idle; 0 = never."),
+                           "popup.\nafter: seconds idle; 0 = never.\n"
+                           "display_off: seconds on the lock screen before the "
+                           "displays power down; 0 = never."),
             {QStringLiteral("after=%1").arg(s.after),
              QStringLiteral("before_suspend=%1").arg(s.beforeSuspend ? "on" : "off"),
              QStringLiteral("skip_fullscreen=%1").arg(s.skipFullscreen ? "on" : "off"),
-             QStringLiteral("skip_audio=%1").arg(s.skipAudio ? "on" : "off")}))
+             QStringLiteral("skip_audio=%1").arg(s.skipAudio ? "on" : "off"),
+             QStringLiteral("display_off=%1").arg(s.displayOff)}))
         qWarning("fanshell-qs: cannot write %s",
                  qPrintable(Paths::configFile(QLatin1String(lockConf))));
     if (s.beforeSuspend)
@@ -1917,7 +1968,7 @@ void ScreenLock::tick()
         m_idle.start(1000);
         return;
     }
-    if (!m_fired && !(m_settings.skipFullscreen && fullscreenFocused(c))
+    if (!m_fired && !m_locked && !(m_settings.skipFullscreen && fullscreenFocused(c))
         && pausedBy().isEmpty()) {
         m_fired = true;
         lockNow();
@@ -1939,6 +1990,7 @@ QStringList ScreenLock::pausedBy() const
 void ScreenLock::lockNow(std::function<void()> done)
 {
     if (!m_locker) {
+        emit aboutToLock();
         m_locker = new QProcess(this);
         m_locker->setProgram(QStringLiteral("fanshell-qs-lock"));
         auto finish = [this]() {
@@ -1946,6 +1998,8 @@ void ScreenLock::lockNow(std::function<void()> done)
                 return;
             m_locker->deleteLater();
             m_locker = nullptr;
+            if (LockScreen::isLocked())
+                setLocked(true);
             emit lockerDone();
         };
         connect(m_locker, &QProcess::finished, this, finish);

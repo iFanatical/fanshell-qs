@@ -3,10 +3,12 @@
 #
 #   make              the shell
 #   make install      shell and helper scripts into $(PREFIX)/bin
+#   make install-pam  the lock screen's PAM service into /etc/pam.d
 #   make link-config  link the shell's config files into $HOME
 
 PREFIX ?= /usr/local
 BINDIR  = $(DESTDIR)$(PREFIX)/bin
+PAMDIR ?= $(DESTDIR)/etc/pam.d
 
 SCRIPTS = $(wildcard scripts/fanshell-qs-*)
 
@@ -24,6 +26,11 @@ install: all
 	install -m 755 shell/fanshell-qs-shell $(BINDIR)/fanshell-qs-shell
 	install -m 755 $(SCRIPTS) $(BINDIR)
 
+# Not under $(PREFIX): PAM looks for services in /etc/pam.d.
+install-pam:
+	install -d $(PAMDIR)
+	install -m 644 config/pam.d/fanshell-qs-lock $(PAMDIR)/fanshell-qs-lock
+
 # Per user, so never run as root: it links into $HOME.
 link-config:
 	./tools/link-config
@@ -35,4 +42,4 @@ uninstall:
 clean:
 	$(MAKE) -C shell clean
 
-.PHONY: all install link-config uninstall clean shell/fanshell-qs-shell
+.PHONY: all install install-pam link-config uninstall clean shell/fanshell-qs-shell

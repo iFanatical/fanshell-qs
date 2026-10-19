@@ -105,6 +105,7 @@ void MediaControls::serviceOwnerChanged(const QString &name,
         m_ownerServices.remove(oldOwner);
         if (m_pending.service == name)
             m_pending.service.clear();
+        emit changed();
     } else {
         m_ownerServices.insert(newOwner, name);
         refresh(name);
@@ -189,9 +190,31 @@ void MediaControls::apply(const QString &service,
             properties.value(QStringLiteral("Metadata")));
         player.title = metadataString(metadata, QStringLiteral("xesam:title"));
         player.artist = metadataArtist(metadata);
+        player.artUrl = metadataString(metadata, QStringLiteral("mpris:artUrl"));
     }
     player.touched = ++m_touchCounter;
     finishTrackChange(service);
+    emit changed();
+}
+
+MediaControls::NowPlaying MediaControls::nowPlaying() const
+{
+    NowPlaying now;
+    const QString service = selectPlayer(Action::PlayPause);
+    if (service.isEmpty())
+        return now;
+    const Player &player = m_players[service];
+    if (player.status != QLatin1String("Playing")
+        && player.status != QLatin1String("Paused"))
+        return now;
+    now.title = player.title;
+    now.artist = player.artist;
+    now.artUrl = player.artUrl;
+    now.playing = player.status == QLatin1String("Playing");
+    now.canPlayPause = player.canPlayPause;
+    now.canPrevious = player.canPrevious;
+    now.canNext = player.canNext;
+    return now;
 }
 
 QString MediaControls::selectPlayer(Action action) const

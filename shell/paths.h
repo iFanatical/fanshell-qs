@@ -6,7 +6,8 @@
  *   vibrance.conf    digital vibrance per output, restored at startup
  *   outputs.conf     output layouts, written via fanshell-qs-outputs
  *   dpms.conf        screen blanking and DPMS, applied at startup
- *   lock.conf        lock on idle and before sleep
+ *   lock.conf        lock on idle and before sleep, display off when locked
+ *   nightlight.conf  night light: on/off, temperatures, location
  *   shell.conf       hand-edited settings (VPN tunnels, wallpaper directory
  *                    and default mode, UPS, ...): setting() here, and
  *                    scripts/fanshell-qs-conf for the scripts
