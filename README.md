@@ -260,7 +260,8 @@ make link-config           # link this repo's config files into $HOME
 
 Or `tools/install-shell`, which also checks the build and session
 dependencies (offering to install what is missing, and stopping without
-them; the list is the `need` lines at its top), moves a
+them; the list is `need_shell` in `tools/lib.sh`, which the session repos'
+`install.sh` check too, before they build anything), moves a
 running session onto the new build (restarting the bar and reloading sxhkd)
 and removes the files fanoxwm-qs installed before the split. The session
 repos' `install.sh` run it as their last step.

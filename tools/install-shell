@@ -27,40 +27,7 @@ require_user
 prefix=${PREFIX:-/usr/local}
 
 step "fanshell-qs: checking dependencies"
-# Building the shell. On Gentoo, dev-qt/qtbase needs USE "dbus gui network
-# widgets X" (see the Requirements section of README.md).
-need pkg-config pkgconf-pkg-config dev-util/pkgconf pkgconf "building the shell"
-need make make dev-build/make make "building the shell"
-need "${CXX:-g++}" gcc-c++ sys-devel/gcc gcc "building the shell"
-for module in Qt6Widgets Qt6Gui Qt6Core Qt6DBus Qt6Network; do
-    need "pc:$module" qt6-qtbase-devel dev-qt/qtbase qt6-base "the shell"
-done
-for module in xcb xcb-randr xcb-dpms xcb-screensaver xcb-xkb xcb-xinput; do
-    need "pc:$module" libxcb-devel x11-libs/libxcb libxcb "the panel, Displays, the lock screen"
-done
-need pc:x11 libX11-devel x11-libs/libX11 libx11 "the XEmbed tray"
-need pc:xcomposite libXcomposite-devel x11-libs/libXcomposite libxcomposite "the XEmbed tray"
-need pc:xdamage libXdamage-devel x11-libs/libXdamage libxdamage "the XEmbed tray"
-need pc:xfixes libXfixes-devel x11-libs/libXfixes libxfixes "the XEmbed tray"
-need pc:xkbfile libxkbfile-devel x11-libs/libxkbfile libxkbfile "the Keyboard settings"
-need pc:libpulse pulseaudio-libs-devel media-libs/libpulse libpulse "volume and microphone"
-# PAM has no pkg-config file everywhere; look for its header instead.
-need h:security/pam_appl.h pam-devel sys-libs/pam pam "the lock screen's password check"
-# fanshell-qs-session: the portals it points D-Bus-activated programs at, and
-# the bus tools it runs.
-need /usr/share/dbus-1/services/org.freedesktop.portal.Desktop.service \
-    xdg-desktop-portal sys-apps/xdg-desktop-portal xdg-desktop-portal \
-    "file pickers and colour scheme for GTK, Electron and Brave"
-need /usr/share/xdg-desktop-portal/portals/gtk.portal \
-    xdg-desktop-portal-gtk sys-apps/xdg-desktop-portal-gtk xdg-desktop-portal-gtk \
-    "the portal backend config/xdg-desktop-portal/portals.conf picks"
-need dbus-update-activation-environment dbus-tools sys-apps/dbus dbus \
-    "passing the session environment to D-Bus-activated programs"
-# Only where nothing provides /run/user/UID/bus: fanshell-qs-session then
-# starts the session's own bus.
-[ -d /run/systemd/system ] ||
-    need dbus-run-session dbus-daemon sys-apps/dbus dbus "a session bus of its own"
-need gsettings glib2 dev-libs/glib glib2 "GTK theme, icons, font and colour scheme"
+need_shell
 install_needed
 
 step "fanshell-qs: building"
