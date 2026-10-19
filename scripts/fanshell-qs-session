@@ -20,10 +20,20 @@ fi
 
 # --- environment -----------------------------------------------------------
 
+# The session bus: the one at /run/user/UID/bus when there is one (systemd's
+# user manager, or an OpenRC user service), else whatever startx was given,
+# else a bus of our own for the life of the session. That last re-runs this
+# script under dbus-run-session, so it comes before anything else is set up
+# or started; _FANSHELL_DBUS keeps it from doing so twice.
+if [ -S "/run/user/$(id -u)/bus" ]; then
+    export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
+elif [ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ] && [ -z "${_FANSHELL_DBUS:-}" ]; then
+    export _FANSHELL_DBUS=1
+    exec dbus-run-session -- "$0" "$@"
+fi
+
 export SCRIPTS="$HOME/.local/bin"
 export PATH="$HOME/.local/bin:$PATH"
-
-export DBUS_SESSION_BUS_ADDRESS="unix:path=/run/user/$(id -u)/bus"
 
 if [ -f "$HOME/.config/user-dirs.dirs" ]; then
     set -a
@@ -81,5 +91,20 @@ gsettings set org.gnome.desktop.interface gtk-theme Tokyo-Night
 gsettings set org.gnome.desktop.interface cursor-size 24
 gsettings set org.gtk.Settings.FileChooser sort-directories-first true
 gsettings set org.gtk.gtk4.Settings.FileChooser sort-directories-first true
+
+# --- D-Bus activation ------------------------------------------------------
+
+# Programs the bus starts on demand (the portals, and anything else
+# D-Bus-activated) get the display and desktop name from here, not from this
+# script. Under systemd they are started by the user manager, which also
+# needs graphical-session.target up before it will start the portal; a
+# startx session only gets that through fanshell-qs-session.target
+# (config/systemd). It stays up after logging out of X, which is harmless.
+if [ -d /run/systemd/system ]; then
+    dbus-update-activation-environment --systemd DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP
+    systemctl --user start fanshell-qs-session.target
+else
+    dbus-update-activation-environment DISPLAY XAUTHORITY XDG_CURRENT_DESKTOP
+fi
 
 exec "$@"

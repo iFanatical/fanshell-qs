@@ -1,0 +1,14 @@
+# fanshell-qs-session.target — the startx session, as far as the systemd
+# user manager is concerned. fanshell-qs-session starts it once the session
+# environment is in place; graphical-session.target (which the portal and
+# other session services require) refuses a manual start and can only come
+# up bound to a target like this one.
+#
+# Linked into ~/.config/systemd/user by tools/link-config, on systemd hosts
+# only.
+
+[Unit]
+Description=fanshell-qs X session
+BindsTo=graphical-session.target
+Wants=graphical-session-pre.target
+After=graphical-session-pre.target

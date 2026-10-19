@@ -27,3 +27,10 @@ link "$config_dir/alacritty.toml" "$config_home/alacritty/alacritty.toml"
 link "$config_dir/websites.json" "$config_home/fanshell-qs/websites.json"
 link "$config_dir/outputs.defaults.conf" "$config_home/fanshell-qs/outputs.defaults.conf"
 link "$config_dir/mouse.defaults.conf" "$config_home/fanshell-qs/mouse.defaults.conf"
+link "$config_dir/xdg-desktop-portal/portals.conf" "$config_home/xdg-desktop-portal/portals.conf"
+# Only where systemd is the init: fanshell-qs-session starts this target
+# there, and nowhere else.
+if [ -d /run/systemd/system ]; then
+    link "$config_dir/systemd/fanshell-qs-session.target" \
+        "$config_home/systemd/user/fanshell-qs-session.target"
+fi

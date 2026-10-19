@@ -25,7 +25,7 @@ in one repo, and from fanhypr-qs `9ea1f08` before that.
 │   ├── shell/                the Qt shell
 │   ├── scripts/fanshell-qs-* helper scripts the widgets exec
 │   ├── tools/                link-config, install-shell and the RAPL installer
-│   └── config/               sxhkdrc, picom.conf, alacritty.toml, websites.json, output defaults, PAM service
+│   └── config/               sxhkdrc, picom.conf, alacritty.toml, websites.json, output defaults, PAM service, portals.conf, the systemd session target
 ├── fanoxwm-qs/               the oxwm session
 ├── fanqtile-qs/              the qtile session
 └── oxwm/                     upstream oxwm, read by fanoxwm-qs's build
@@ -48,6 +48,7 @@ sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config \
     libXdamage-devel libXfixes-devel libxkbfile-devel pulseaudio-libs-devel pam-devel \
     zig libXft-devel libXinerama-devel fontconfig-devel \
     xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd \
+    dbus-tools xdg-desktop-portal xdg-desktop-portal-gtk glib2 \
     jq xdotool xprop feh NetworkManager bluez brightnessctl \
     ddcutil power-profiles-daemon wireguard-tools net-snmp-utils curl \
     pipewire-utils alacritty xdg-utils xsetroot xsettingsd \
@@ -92,7 +93,9 @@ It builds patched oxwm (the first build downloads Lua through Zig, so it
 needs the network) and `oxwmctl`, installs them and the oxwm scripts into
 `/usr/local/bin`, links `~/.xinitrc`, `~/.X_envars` and `~/.config/oxwm`,
 then builds, installs and links the shell. A real file in the way of a link
-is moved to `NAME.bak-DATE`, never overwritten.
+is moved to `NAME.bak-DATE`, never overwritten. If a dependency the shell
+or its session needs is missing, it lists them, asks whether to install them
+(`dnf`, `emerge` or `pacman`, through sudo), and stops if you say no.
 
 Optional, from this repo's `tools/`: `sudo ./install-rapl-udev.sh` for
 CPU wattage in the power pill.
@@ -165,7 +168,9 @@ manager itself, and what it needs to build, is listed in its own repo.
 | X11, XComposite, XDamage, XFixes | `libX11-devel` `libXcomposite-devel` `libXdamage-devel` `libXfixes-devel` | `x11-libs/libX11` `x11-libs/libXcomposite` `x11-libs/libXdamage` `x11-libs/libXfixes` | the XEmbed tray |
 | libpulse | `pulseaudio-libs-devel` | `media-libs/libpulse` | volume and microphone control; works against pipewire-pulse |
 | An X server and xinit | `xorg-x11-server-Xorg` `xorg-x11-xinit` | `x11-base/xorg-server` `x11-apps/xinit` | running the session from `~/.xinitrc` with `startx` (XLibre works too) |
-| A D-Bus session bus | `dbus` | `sys-apps/dbus` | notifications, the StatusNotifierItem tray, media controls |
+| A D-Bus session bus | `dbus` `dbus-tools` | `sys-apps/dbus` | notifications, the StatusNotifierItem tray, media controls; `fanshell-qs-session` uses `/run/user/UID/bus` when systemd or an OpenRC user service provides it, and otherwise starts one with `dbus-run-session` (Fedora `dbus-daemon`) |
+| xdg-desktop-portal and its GTK backend | `xdg-desktop-portal` `xdg-desktop-portal-gtk` | `sys-apps/xdg-desktop-portal` `sys-apps/xdg-desktop-portal-gtk` | file pickers and the colour scheme for GTK, Electron and Brave; `config/xdg-desktop-portal/portals.conf` picks the GTK backend |
+| glib2 (`gsettings`) | `glib2` | `dev-libs/glib` | GTK theme, icons, font and colour scheme, which the portal passes on |
 | picom, or another compositor | `picom` | `x11-misc/picom` | translucent panel and toasts, and the popup scrim, which is otherwise drawn opaque |
 | xrandr | `xrandr` | `x11-apps/xrandr` | applying output layouts, at login and from the Displays popup |
 | sxhkd | `sxhkd` | `x11-misc/sxhkd` | every program, popup and media hotkey in `config/sxhkdrc`; the window manager only binds window management |
@@ -202,7 +207,6 @@ instead of installed.
 |---|---|---|---|
 | xsetroot | `xsetroot` | `x11-apps/xsetroot` | the root window's arrow cursor |
 | xsettingsd | `xsettingsd` | `x11-misc/xsettingsd` | GTK/Qt theme and font settings for X apps |
-| glib2 (`gsettings`) | `glib2` | `dev-libs/glib` | GTK theme, icons, font and colour scheme |
 | A polkit agent | `mate-polkit` | `mate-extra/mate-polkit` | password prompts for privileged actions |
 | gpu-screen-recorder-ui | — | — | `gsr-ui launch-daemon`, screen recording |
 
@@ -215,14 +219,16 @@ Required:
 sudo dnf install gcc gcc-c++ make pkgconf-pkg-config \
     qt6-qtbase-devel libxcb-devel libX11-devel libXcomposite-devel \
     libXdamage-devel libXfixes-devel libxkbfile-devel pulseaudio-libs-devel pam-devel \
-    xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd
+    xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd \
+    dbus-tools xdg-desktop-portal xdg-desktop-portal-gtk glib2
 
 # Gentoo
 sudo emerge dev-qt/qtbase x11-libs/libxcb x11-libs/libX11 \
     x11-libs/libXcomposite \
     x11-libs/libXdamage x11-libs/libXfixes x11-libs/libxkbfile media-libs/libpulse sys-libs/pam \
     x11-base/xorg-server x11-apps/xinit x11-misc/picom x11-apps/xrandr \
-    x11-misc/sxhkd
+    x11-misc/sxhkd sys-apps/dbus sys-apps/xdg-desktop-portal \
+    sys-apps/xdg-desktop-portal-gtk dev-libs/glib
 ```
 
 Optional, everything above:
@@ -252,7 +258,9 @@ sudo make install          # shell and helper scripts into /usr/local/bin
 make link-config           # link this repo's config files into $HOME
 ```
 
-Or `tools/install-shell`, which also checks the build dependencies, moves a
+Or `tools/install-shell`, which also checks the build and session
+dependencies (offering to install what is missing, and stopping without
+them; the list is the `need` lines at its top), moves a
 running session onto the new build (restarting the bar and reloading sxhkd)
 and removes the files fanoxwm-qs installed before the split. The session
 repos' `install.sh` run it as their last step.
@@ -271,7 +279,11 @@ what is their window manager's own and cannot drift apart:
   XDG user dirs, `XDG_SESSION_TYPE`, `_JAVA_AWT_WM_NONREPARENTING`), then
   `~/.X_envars` (the session repo's, for what is its window manager's own,
   such as `XDG_CURRENT_DESKTOP`), the saved output layout, the cursor, the
-  [session daemons](#session-extras) and the GTK theme. Then it execs `WM ARGS...`.
+  [session daemons](#session-extras) and the GTK theme. It hands `DISPLAY`,
+  `XAUTHORITY` and `XDG_CURRENT_DESKTOP` to the bus, for the programs it
+  starts on demand (the portals), and under systemd starts
+  `fanshell-qs-session.target`, which brings up `graphical-session.target`
+  so the portal can start under `startx`. Then it execs `WM ARGS...`.
   Each session repo's `xinitrc` is that one line, `exec fanshell-qs-session
   qtile start` or `... oxwm`, falling back to the bare window manager when
   fanshell-qs is not installed.
@@ -304,6 +316,8 @@ moved to `NAME.bak-DATE` first, and `--dry-run` shows what would change:
 | `config/websites.json` | `~/.config/fanshell-qs/websites.json` (the menu's Websites page) |
 | `config/outputs.defaults.conf` | `~/.config/fanshell-qs/outputs.defaults.conf` (fallback output layouts) |
 | `config/mouse.defaults.conf` | `~/.config/fanshell-qs/mouse.defaults.conf` (pointer speeds for every machine, by part of a device name) |
+| `config/xdg-desktop-portal/portals.conf` | `~/.config/xdg-desktop-portal/portals.conf` (the GTK portal backend, for every session) |
+| `config/systemd/fanshell-qs-session.target` | `~/.config/systemd/user/fanshell-qs-session.target` (systemd hosts only) |
 
 The tray and toasts live on X's primary output (`xrandr --primary`). The
 launcher, wallpaper picker and Control Panel open on the output the window
