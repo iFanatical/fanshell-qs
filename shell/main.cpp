@@ -5,7 +5,7 @@
  *   fanshell-qs-shell ipc call <target> <fn>  poke a running instance
  *                    (targets: shell, launcher, runner, emoji, notifications,
  *                     audio, brightness, media, vpn, wallpaper, menu,
- *                     outputs, dpms, lock, keyboard, controlpanel) */
+ *                     outputs, dpms, lock, keyboard, mouse, controlpanel) */
 #include <QApplication>
 #include <QHash>
 #include <QScreen>
@@ -16,6 +16,7 @@
 #include "hardwarecontrols.h"
 #include "ipc.h"
 #include "keyboard.h"
+#include "mouse.h"
 #include "launcher.h"
 #include "media.h"
 #include "notification.h"
@@ -115,6 +116,8 @@ int main(int argc, char *argv[])
     ScreenLock::instance();
     /* Turns Num Lock on, once per X session, per keyboard.conf. */
     KeyboardSettings::instance();
+    /* Applies the saved pointer settings, and again on hotplug. */
+    MouseSettings::instance();
 
     auto *ipc = new IpcServer(&app);
     ipc->handle(QStringLiteral("menu"), QStringLiteral("toggle"),
@@ -218,6 +221,12 @@ int main(int argc, char *argv[])
                 []() { KeyboardSettings::instance()->openWindow(); });
     ipc->handle(QStringLiteral("keyboard"), QStringLiteral("hide"),
                 []() { KeyboardSettings::instance()->hideWindow(); });
+    ipc->handle(QStringLiteral("mouse"), QStringLiteral("toggle"),
+                []() { MouseSettings::instance()->toggleWindow(); });
+    ipc->handle(QStringLiteral("mouse"), QStringLiteral("show"),
+                []() { MouseSettings::instance()->openWindow(); });
+    ipc->handle(QStringLiteral("mouse"), QStringLiteral("hide"),
+                []() { MouseSettings::instance()->hideWindow(); });
     ipc->handle(QStringLiteral("lock"), QStringLiteral("toggle"),
                 []() { ScreenLock::instance()->toggleWindow(); });
     ipc->handle(QStringLiteral("lock"), QStringLiteral("show"),

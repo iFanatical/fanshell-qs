@@ -9,6 +9,7 @@
 
 #include "displays.h"
 #include "keyboard.h"
+#include "mouse.h"
 #include "overlay.h"
 #include "paths.h"
 #include "wallpaper.h"
@@ -144,6 +145,9 @@ public:
         m_keyboard = add(U'\U000F030C', QStringLiteral("Keyboard"), []() {
             KeyboardSettings::instance()->openWindow();
         });
+        m_mouse = add(U'\U000F037D', QStringLiteral("Mouse & touchpad"), []() {
+            MouseSettings::instance()->openWindow();
+        });
         m_wallpaper = add(U'\U000F0E09', QStringLiteral("Wallpaper"), []() {
             WallpaperPicker::instance()->openPicker();
         });
@@ -191,11 +195,16 @@ private:
                                      : QStringLiteral("Off")));
 
         const KeyboardSettings::Settings keys = KeyboardSettings::instance()->settings();
-        m_keyboard->setStatus(QStringLiteral("Repeat %1 ms · %2/s · Num Lock %3")
+        m_keyboard->setStatus(QStringLiteral("Repeat %1 ms, %2/s")
                                   .arg(keys.repeatDelay)
-                                  .arg(keys.repeatRate)
-                                  .arg(keys.numlock ? QStringLiteral("on")
-                                                    : QStringLiteral("off")));
+                                  .arg(keys.repeatRate));
+
+        const QVector<MouseSettings::Device> pointers =
+            MouseSettings::instance()->devices();
+        m_mouse->setStatus(pointers.isEmpty() ? QStringLiteral("No devices")
+                           : pointers.size() == 1
+                               ? pointers.first().name
+                               : QStringLiteral("%1 devices").arg(pointers.size()));
 
         const QString path = Paths::readConf(QStringLiteral("wallpaper.conf"))
                                  .value(QStringLiteral("path"));
@@ -208,6 +217,7 @@ private:
     Tile *m_power;
     Tile *m_lock;
     Tile *m_keyboard;
+    Tile *m_mouse;
     Tile *m_wallpaper;
 };
 

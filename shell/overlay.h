@@ -10,6 +10,7 @@
 #include <QKeyEvent>
 #include <QLayout>
 #include <QMouseEvent>
+#include <QFontMetrics>
 #include <QPainter>
 #include <QPointer>
 #include <QScreen>
@@ -159,11 +160,13 @@ protected:
                          Theme::radius);
         p.setFont(Theme::font(Theme::smallFontSize));
         p.setPen(isEnabled() ? Theme::text : Theme::textMuted);
+        const QRect textRect = rect().adjusted(10, 0, -24, 0);
         const QString text = m_current >= 0 && m_current < m_items.size()
-                                 ? m_items[m_current]
+                                 ? QFontMetrics(p.font()).elidedText(
+                                       m_items[m_current], Qt::ElideRight,
+                                       textRect.width())
                                  : QString();
-        p.drawText(rect().adjusted(10, 0, -24, 0),
-                   Qt::AlignLeft | Qt::AlignVCenter, text);
+        p.drawText(textRect, Qt::AlignLeft | Qt::AlignVCenter, text);
         p.setPen(Theme::textMuted);
         p.drawText(rect().adjusted(0, 0, -10, 0),
                    Qt::AlignRight | Qt::AlignVCenter, QStringLiteral("▾"));

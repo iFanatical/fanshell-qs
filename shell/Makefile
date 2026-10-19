@@ -35,7 +35,7 @@ MODULES  = widgets popup surface procutil wmstate oxwmipc oxwmstate qtileipc \
            panel network bluetooth volume tray traymenu desktopentry \
            launcher ipc clipboard system battery wallpaper notification osd \
            hardwarecontrols powerprofiles media menu xembedtray vibrance displays \
-           controlpanel keyboard
+           controlpanel keyboard mouse
 # headers containing Q_OBJECT classes
 MOCHDRS  = widgets popup procutil wmstate oxwmipc oxwmstate qtilestate calendar \
            pills panel \

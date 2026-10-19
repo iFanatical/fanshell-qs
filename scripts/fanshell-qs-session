@@ -48,16 +48,8 @@ fanshell-qs-outputs apply
 
 # Key repeat, Caps Lock and Compose are the shell's (Control Panel >
 # Keyboard, keyboard.conf), applied when it starts.
-if command -v xinput >/dev/null 2>&1; then
-    set_accel() {
-        xinput list --name-only | grep -i -- "$1" | while read -r device; do
-            xinput set-prop "pointer:$device" "libinput Accel Speed" "$2" 2>/dev/null
-        done
-    }
-    set_accel "epic mouse" -0.5
-    set_accel "harpe ace" -0.2
-    set_accel "g pro" -0.5
-fi
+# Pointer speed and acceleration are the shell's too (Control Panel >
+# Mouse & touchpad, mouse.conf and mouse.defaults.conf).
 
 xsetroot -cursor_name left_ptr
 # Screen blanking and DPMS are set by fanshell-qs-shell from

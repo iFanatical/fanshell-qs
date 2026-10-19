@@ -26,3 +26,4 @@ link "$config_dir/alacritty.toml" "$config_home/alacritty/alacritty.toml"
 # (wallpaper.conf, vibrance.conf), which does not belong in the repo.
 link "$config_dir/websites.json" "$config_home/fanshell-qs/websites.json"
 link "$config_dir/outputs.defaults.conf" "$config_home/fanshell-qs/outputs.defaults.conf"
+link "$config_dir/mouse.defaults.conf" "$config_home/fanshell-qs/mouse.defaults.conf"

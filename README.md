@@ -50,7 +50,7 @@ sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config \
     xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd \
     jq xdotool xprop feh NetworkManager bluez brightnessctl \
     ddcutil power-profiles-daemon wireguard-tools net-snmp-utils curl \
-    pipewire-utils alacritty xdg-utils xinput xsetroot xsettingsd \
+    pipewire-utils alacritty xdg-utils xsetroot xsettingsd \
     mate-polkit
 ```
 
@@ -203,7 +203,6 @@ instead of installed.
 
 | What | Fedora | Gentoo | For |
 |---|---|---|---|
-| xinput | `xinput` | `x11-apps/xinput` | per-mouse pointer acceleration |
 | xsetroot | `xsetroot` | `x11-apps/xsetroot` | the root window's arrow cursor |
 | xsettingsd | `xsettingsd` | `x11-misc/xsettingsd` | GTK/Qt theme and font settings for X apps |
 | glib2 (`gsettings`) | `glib2` | `dev-libs/glib` | GTK theme, icons, font and colour scheme |
@@ -236,7 +235,7 @@ Optional, everything above:
 sudo dnf install feh NetworkManager bluez \
     brightnessctl ddcutil power-profiles-daemon wireguard-tools \
     net-snmp-utils curl pipewire-utils alacritty xdg-utils \
-    xinput xsetroot xsettingsd mate-polkit
+    xsetroot xsettingsd mate-polkit
 tools/install-i3lock-color   # builds it; needs the deps listed in its header
 
 # Gentoo
@@ -245,7 +244,7 @@ sudo emerge media-gfx/feh \
     app-misc/brightnessctl app-misc/ddcutil sys-power/power-profiles-daemon \
     net-vpn/wireguard-tools net-analyzer/net-snmp net-misc/curl \
     media-video/pipewire x11-terms/alacritty \
-    x11-misc/xdg-utils x11-apps/xinput x11-apps/xsetroot \
+    x11-misc/xdg-utils x11-apps/xsetroot \
     x11-misc/xsettingsd mate-extra/mate-polkit x11-misc/i3lock-color
 ```
 
@@ -275,9 +274,8 @@ what is their window manager's own and cannot drift apart:
   window manager: the environment (`PATH`, `SCRIPTS`, the D-Bus address,
   XDG user dirs, `XDG_SESSION_TYPE`, `_JAVA_AWT_WM_NONREPARENTING`), then
   `~/.X_envars` (the session repo's, for what is its window manager's own,
-  such as `XDG_CURRENT_DESKTOP`), the saved output layout, per-mouse
-  acceleration, the cursor, the [session
-  daemons](#session-extras) and the GTK theme. Then it execs `WM ARGS...`.
+  such as `XDG_CURRENT_DESKTOP`), the saved output layout, the cursor, the
+  [session daemons](#session-extras) and the GTK theme. Then it execs `WM ARGS...`.
   Each session repo's `xinitrc` is that one line, `exec fanshell-qs-session
   qtile start` or `... oxwm`, falling back to the bare window manager when
   fanshell-qs is not installed.
@@ -309,6 +307,7 @@ moved to `NAME.bak-DATE` first, and `--dry-run` shows what would change:
 | `config/alacritty.toml` | `~/.config/alacritty/alacritty.toml` (the terminal sxhkd and the window managers open) |
 | `config/websites.json` | `~/.config/fanshell-qs/websites.json` (the menu's Websites page) |
 | `config/outputs.defaults.conf` | `~/.config/fanshell-qs/outputs.defaults.conf` (fallback output layouts) |
+| `config/mouse.defaults.conf` | `~/.config/fanshell-qs/mouse.defaults.conf` (pointer speeds for every machine, by part of a device name) |
 
 The tray and toasts live on X's primary output (`xrandr --primary`). The
 launcher, wallpaper picker and Control Panel open on the output the window
@@ -328,6 +327,7 @@ cache loses nothing you chose:
 | `dpms.conf` | screen blanking and DPMS timeouts; applied at startup |
 | `lock.conf` | lock on idle, before sleep, and the fullscreen pause |
 | `keyboard.conf` | key repeat, Caps Lock and Compose keys, Num Lock at login, lock OSD, backlight timeout |
+| `mouse.conf` | pointer settings per device, by name |
 | `websites.json` | linked from the repo (above) |
 | `sounds/` | optional `audio-volume-change.*` for volume feedback |
 
@@ -347,7 +347,8 @@ in the caption below the row as you point at them; the last three ask for a
 second click). Settings live in the **Control Panel**, opened from the
 dropdown's header (or `ipc call controlpanel toggle`). It is a grid of
 tiles, each showing a line of live status and opening its own window:
-Displays, Screen power, Screen lock, Keyboard and Wallpaper. A new settings window
+Displays, Screen power, Screen lock, Keyboard, Mouse & touchpad and
+Wallpaper. A new settings window
 becomes a tile in `shell/controlpanel.cpp`.
 
 ### Displays
@@ -448,6 +449,30 @@ A keyboard plugged in later starts with the X server's defaults, so the
 shell applies the repeat rate and the options again when one is added.
 Saved to `keyboard.conf`.
 
+### Mouse & touchpad
+
+**Mouse & touchpad** in the Control Panel (or `ipc call mouse toggle`)
+sets, for the device picked at the top:
+
+- **Speed**, -1 to 1 (0 is the driver's default), and **Acceleration**:
+  adaptive, or flat for none, where the same hand movement always moves
+  the pointer the same distance.
+- **Natural scrolling** and **Left-handed** buttons.
+- On a touchpad, **Tap to click**, **Disable while typing** and
+  **Scrolling** with two fingers or along the edge.
+
+Only what the device supports is shown, and only devices on the libinput
+X driver (the default) are listed; one on evdev is set in `xorg.conf`
+instead. These are the driver's XInput properties, set over xcb as
+`xinput set-prop` would, so xinput is not needed. **Reset device** puts a
+device back to the driver's defaults.
+
+Settings follow a device by name, so they come back when it is plugged in
+again: the popup saves them to `mouse.conf` by exact name, and
+`mouse.defaults.conf`, linked from `config/`, sets them on every machine by
+any part of a name, ignoring case (`speed:g pro=-0.5`). The popup's choice
+wins over the defaults file.
+
 ## Bringing over fanhypr-qs changes
 
 The shell is a port, not a fork with shared history. Most files differ from
@@ -509,7 +534,8 @@ ups.community=public
 | `menu.source_dir` | this checkout, for the menu's entries that open its files (default `~/projects/window-managers/fanshell-qs`) |
 
 The other files in `~/.config/fanshell-qs` (`wallpaper.conf`,
-`vibrance.conf`, `outputs.conf`, `dpms.conf`, `lock.conf`, `keyboard.conf`) are written by
+`vibrance.conf`, `outputs.conf`, `dpms.conf`, `lock.conf`, `keyboard.conf`,
+`mouse.conf`) are written by
 the shell's popups; edit those settings there.
 
 One environment variable remains, because it is about the window manager
