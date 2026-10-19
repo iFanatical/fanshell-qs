@@ -421,7 +421,9 @@ time and date over the blurred wallpaper, the weather (bottom left), the
 uptime (bottom right), the battery on a laptop (top right), and the playing
 music with its cover and previous/play/next buttons. A key or click brings
 up your name and picture (`~/.face`, or AccountsService's), and a password
-field. Escape goes back to the clock, as does half a minute without input.
+field with a blinking caret; that first key is not typed into it, nor are
+its repeats while held.
+Escape goes back to the clock, as does half a minute without input.
 Caps Lock and a wrong password are shown under the field. The volume,
 brightness and media keys keep working, but no notification or OSD shows
 while locked.

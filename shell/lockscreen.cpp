@@ -414,6 +414,13 @@ public:
             updateAll();
             scheduleClock();
         });
+        m_blink.setInterval(530);
+        connect(&m_blink, &QTimer::timeout, this, [this]() {
+            m_caretOn = !m_caretOn;
+            /* Just the field, not the whole screen. */
+            if (m_primary)
+                m_primary->update(m_fieldRect.toAlignedRect().adjusted(-4, -4, 4, 4));
+        });
         m_promptIdle.setSingleShot(true);
         m_promptIdle.setInterval(promptIdleMs);
         connect(&m_promptIdle, &QTimer::timeout, this, [this]() {
@@ -701,13 +708,22 @@ private:
             clearPassword();
             m_wrong = false;
             m_promptIdle.stop();
+            m_blink.stop();
         } else {
             m_promptIdle.start();
+            restartCaret();
         }
         m_anim.stop();
         m_anim.setStartValue(m_t);
         m_anim.setEndValue(on ? 1.0 : 0.0);
         m_anim.start();
+    }
+
+    /* Solid while typing, blinking again after. */
+    void restartCaret()
+    {
+        m_caretOn = true;
+        m_blink.start();
     }
 
     void clearPassword()
@@ -914,6 +930,12 @@ private:
     int m_failures = 0;
 
     bool m_prompt = false;
+    /* Until the next fresh key press: ignore the waking key's repeats. */
+    bool m_wakeKeyHeld = false;
+    QTimer m_blink;
+    bool m_caretOn = true;
+    /* The password field as last painted, for the caret's repaints. */
+    QRectF m_fieldRect;
     double m_t = 0;
     QVariantAnimation m_anim;
     QVariantAnimation m_shake;
@@ -1069,7 +1091,10 @@ void Locker::paintPrompt(QPainter &p, const QRectF &r, double avatarY)
     p.setPen(m_length > 0 ? Theme::textStrong : Theme::textMuted);
     p.drawText(arrow, Qt::AlignCenter, glyph(U'\U000F0054'));
 
+    m_fieldRect = QRectF((W - fw) / 2 - 12, field.top(), fw + 24, fh);
     const QRectF inner = field.adjusted(22, 0, -fh, 0);
+    /* Where the caret goes: before the placeholder, or after the last dot. */
+    double caretX = inner.left();
     if (m_checking) {
         p.setFont(uiFont(15));
         p.setPen(Theme::textMuted);
@@ -1077,17 +1102,22 @@ void Locker::paintPrompt(QPainter &p, const QRectF &r, double avatarY)
     } else if (m_glyphs == 0) {
         p.setFont(uiFont(15));
         p.setPen(Theme::textMuted);
-        p.drawText(inner, Qt::AlignLeft | Qt::AlignVCenter, QStringLiteral("Password"));
+        p.drawText(inner.adjusted(8, 0, 0, 0), Qt::AlignLeft | Qt::AlignVCenter,
+                   QStringLiteral("Password"));
     } else {
         const double step = 16, dot = 9;
-        const int fits = qMax(1, int(inner.width() / step));
+        const int fits = qMax(1, int((inner.width() - 6) / step));
         const int shown = qMin(m_glyphs, fits);
         p.setPen(Qt::NoPen);
         p.setBrush(Theme::textStrong);
         for (int i = 0; i < shown; i++)
             p.drawEllipse(QRectF(inner.left() + i * step, field.center().y() - dot / 2,
                                  dot, dot));
+        caretX = inner.left() + shown * step;
     }
+    if (!m_checking && m_caretOn && m_blink.isActive())
+        Theme::paintRect(p, QRectF(caretX, field.center().y() - 11, 2, 22),
+                         Theme::textStrong, 1);
 
     QString message;
     QColor color;
@@ -1213,11 +1243,17 @@ void Locker::key(QKeyEvent *e)
     if (!m_prompt) {
         if (e->key() == Qt::Key_Escape)
             return;
+        /* The key that wakes the prompt only wakes it, so the field starts
+         * empty; nor do its repeats, while it is held, type anything. */
         showPrompt(true);
-        if (printable)
-            append(text);
+        m_wakeKeyHeld = true;
         updatePrimary();
         return;
+    }
+    if (m_wakeKeyHeld) {
+        if (e->isAutoRepeat())
+            return;
+        m_wakeKeyHeld = false;
     }
 
     m_wrong = false;
@@ -1249,6 +1285,8 @@ void Locker::key(QKeyEvent *e)
             append(text);
         break;
     }
+    if (m_prompt)
+        restartCaret();
     updatePrimary();
 }
 
