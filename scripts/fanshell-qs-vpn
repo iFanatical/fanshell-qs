@@ -32,17 +32,18 @@ valid_tunnel() {
 	return 1
 }
 
+# sh has no locals: this must not touch `tunnel`, which select prints after.
 print_status() {
 	i=1
 	while [ "$i" -le "$TUN_COUNT" ]; do
-		tunnel="tun$i"
-		if is_up "$tunnel"; then
-			ip_addr=$(ip -o -4 addr show "$tunnel" 2>/dev/null | awk '{print $4; exit}')
-			printf '%s=up\n' "$tunnel"
-			printf '%s_ip=%s\n' "$tunnel" "${ip_addr:-}"
+		each="tun$i"
+		if is_up "$each"; then
+			ip_addr=$(ip -o -4 addr show "$each" 2>/dev/null | awk '{print $4; exit}')
+			printf '%s=up\n' "$each"
+			printf '%s_ip=%s\n' "$each" "${ip_addr:-}"
 		else
-			printf '%s=down\n' "$tunnel"
-			printf '%s_ip=\n' "$tunnel"
+			printf '%s=down\n' "$each"
+			printf '%s_ip=\n' "$each"
 		fi
 		i=$((i + 1))
 	done
