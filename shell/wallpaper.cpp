@@ -11,15 +11,239 @@
 #include <QPainterPath>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QVariantAnimation>
 #include <QWheelEvent>
 
+#include <xcb/xcb.h>
+
+#include <algorithm>
 #include <csignal>
+#include <cstdlib>
+#include <cstring>
+#include <memory>
 
 #include "wmstate.h"
 #include "paths.h"
 #include "popup.h"
 #include "theme.h"
 #include "surface.h"
+
+/* ------------------------------------------------------------ WallpaperFade */
+
+namespace {
+
+xcb_connection_t *conn()
+{
+    auto *x11 = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
+    return x11 ? x11->connection() : nullptr;
+}
+
+/* The root window's background as wallpaper setters publish it
+ * (_XROOTPMAP_ID), or a null image when there is none or it is not the
+ * usual 24-bit, 32 bits-per-pixel little-endian kind. */
+QImage rootBackground()
+{
+    xcb_connection_t *c = conn();
+    if (!c)
+        return QImage();
+    const xcb_setup_t *setup = xcb_get_setup(c);
+    const xcb_screen_t *screen = xcb_setup_roots_iterator(setup).data;
+    if (setup->image_byte_order != XCB_IMAGE_ORDER_LSB_FIRST)
+        return QImage();
+
+    const char name[] = "_XROOTPMAP_ID";
+    xcb_intern_atom_reply_t *a = xcb_intern_atom_reply(
+        c, xcb_intern_atom(c, 1, uint16_t(strlen(name)), name), nullptr);
+    const xcb_atom_t atom = a ? a->atom : XCB_ATOM_NONE;
+    free(a);
+    if (atom == XCB_ATOM_NONE)
+        return QImage();
+    xcb_pixmap_t pixmap = XCB_NONE;
+    if (xcb_get_property_reply_t *p = xcb_get_property_reply(
+            c, xcb_get_property(c, 0, screen->root, atom, XCB_ATOM_PIXMAP, 0, 1),
+            nullptr)) {
+        if (p->type == XCB_ATOM_PIXMAP && p->format == 32
+                && xcb_get_property_value_length(p) == 4)
+            pixmap = *static_cast<const xcb_pixmap_t *>(xcb_get_property_value(p));
+        free(p);
+    }
+    if (pixmap == XCB_NONE)
+        return QImage();
+
+    const int w = screen->width_in_pixels, h = screen->height_in_pixels;
+    xcb_get_image_reply_t *img = xcb_get_image_reply(
+        c, xcb_get_image(c, XCB_IMAGE_FORMAT_Z_PIXMAP, pixmap, 0, 0, uint16_t(w),
+                         uint16_t(h), ~0u),
+        nullptr);
+    if (!img)
+        return QImage();
+    QImage out;
+    const int len = xcb_get_image_data_length(img);
+    if (img->depth == 24 && len == w * h * 4) {
+        /* BGRX bytes: Format_RGB32 on a little-endian machine. */
+        out = QImage(w, h, QImage::Format_RGB32);
+        for (int y = 0; y < h; y++)
+            memcpy(out.scanLine(y), xcb_get_image_data(img) + y * w * 4, size_t(w) * 4);
+    }
+    free(img);
+    return out;
+}
+
+/* One output's part of the fade: an override-redirect window at the bottom
+ * of the stack, above the root background and below every other window.
+ * It has an alpha channel so picom never takes it for an opaque fullscreen
+ * window and stops compositing (unredir-if-fullscreen). */
+class FadeWindow : public QWidget {
+public:
+    FadeWindow(const QRect &geometry, const QImage &from)
+        : QWidget(nullptr, Qt::X11BypassWindowManagerHint | Qt::FramelessWindowHint
+                               | Qt::WindowDoesNotAcceptFocus
+                               | Qt::WindowTransparentForInput),
+          m_from(from)
+    {
+        setAttribute(Qt::WA_TranslucentBackground);
+        setAttribute(Qt::WA_ShowWithoutActivating);
+        setAttribute(Qt::WA_X11DoNotAcceptFocus);
+        setWindowTitle(QStringLiteral("fanshell-qs-wallpaper-fade"));
+        setGeometry(geometry);
+    }
+
+    std::function<void()> painted;
+
+    void setTo(const QImage &to) { m_to = to; }
+    void setProgress(qreal t)
+    {
+        m_t = t;
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setCompositionMode(QPainter::CompositionMode_Source);
+        p.drawImage(0, 0, m_from);
+        if (!m_to.isNull() && m_t > 0) {
+            p.setCompositionMode(QPainter::CompositionMode_SourceOver);
+            p.setOpacity(m_t);
+            p.drawImage(0, 0, m_to);
+        }
+        if (painted) {
+            auto done = std::move(painted);
+            painted = nullptr;
+            done();
+        }
+    }
+
+private:
+    QImage m_from;
+    QImage m_to;
+    qreal m_t = 0;
+};
+
+} /* namespace */
+
+/* Covers the outputs with the old wallpaper while feh sets the new one, then
+ * cross-fades to it. See wallpaper.h. */
+class WallpaperFade : public QObject {
+public:
+    explicit WallpaperFade(QObject *parent) : QObject(parent)
+    {
+        m_anim.setStartValue(0.0);
+        m_anim.setEndValue(1.0);
+        m_anim.setEasingCurve(QEasingCurve::InOutQuad);
+        connect(&m_anim, &QVariantAnimation::valueChanged, this,
+                [this](const QVariant &v) {
+                    for (FadeWindow *w : std::as_const(m_windows))
+                        w->setProgress(v.toReal());
+                });
+        connect(&m_anim, &QVariantAnimation::finished, this, [this]() { clear(); });
+    }
+
+    /* wallpaper.fade_ms, or 0 when wallpaper.fade=off. */
+    static int duration()
+    {
+        if (Paths::setting(QStringLiteral("wallpaper.fade")).toLower()
+                == QLatin1String("off"))
+            return 0;
+        bool ok = false;
+        const int ms = Paths::setting(QStringLiteral("wallpaper.fade_ms")).toInt(&ok);
+        return ok ? std::clamp(ms, 0, 10000) : 500;
+    }
+
+    bool busy() const { return !m_windows.isEmpty(); }
+
+    /* Show the old wallpaper over every output and call `covered` once it
+     * is on screen. False, without calling it, when there is nothing to
+     * fade from. */
+    bool cover(std::function<void()> covered)
+    {
+        if (busy())
+            return false;
+        const QImage root = rootBackground();
+        if (root.isNull())
+            return false;
+        /* Once, when every window has painted -- or after half a second
+         * regardless, so a window that is never exposed cannot hold feh up. */
+        auto once = std::make_shared<std::function<void()>>(std::move(covered));
+        auto fire = [once]() {
+            if (*once) {
+                auto f = std::move(*once);
+                *once = nullptr;
+                f();
+            }
+        };
+        QTimer::singleShot(500, this, fire);
+        const QList<QScreen *> screens = QGuiApplication::screens();
+        auto pending = std::make_shared<int>(0);
+        for (QScreen *s : screens) {
+            const QRect g = s->geometry() & root.rect();
+            if (g.isEmpty())
+                continue;
+            auto *w = new FadeWindow(g, root.copy(g));
+            ++*pending;
+            /* A frame for picom to show it too, before the root changes. */
+            w->painted = [this, pending, fire]() {
+                if (--*pending == 0)
+                    QTimer::singleShot(30, this, fire);
+            };
+            m_windows << w;
+            w->show();
+            w->lower();
+        }
+        if (m_windows.isEmpty())
+            *once = nullptr;
+        return !m_windows.isEmpty();
+    }
+
+    /* feh is done: fade to what it set, or just uncover if it failed. */
+    void reveal(bool changed, int ms)
+    {
+        const QImage root = changed ? rootBackground() : QImage();
+        if (root.isNull()) {
+            clear();
+            return;
+        }
+        for (FadeWindow *w : std::as_const(m_windows))
+            w->setTo(root.copy(w->geometry()));
+        m_anim.setDuration(qMax(1, ms));
+        m_anim.start();
+    }
+
+private:
+    void clear()
+    {
+        m_anim.stop();
+        for (FadeWindow *w : std::as_const(m_windows)) {
+            w->hide();
+            w->deleteLater();
+        }
+        m_windows.clear();
+    }
+
+    QVector<FadeWindow *> m_windows;
+    QVariantAnimation m_anim;
+};
 
 /* ---------------------------------------------------------- WallpaperPicker */
 
@@ -47,6 +271,7 @@ QString WallpaperPicker::mode()
 WallpaperPicker::WallpaperPicker(QObject *parent) : QObject(parent)
 {
     m_win = new WallpaperWindow(this);
+    m_fade = new WallpaperFade(this);
 
     m_decoder.setSingleShot(false);
     m_decoder.setInterval(0);
@@ -187,7 +412,7 @@ void WallpaperPicker::refreshCurrent()
 }
 
 void WallpaperPicker::runFeh(const QString &path, const QString &feMode,
-                             bool remember)
+                             bool remember, std::function<void(bool)> done)
 {
     /* feh sets every output. --no-fehbg: the choice is kept in
      * wallpaper.conf, not in a script feh would drop into $HOME. */
@@ -201,9 +426,10 @@ void WallpaperPicker::runFeh(const QString &path, const QString &feMode,
         signal(SIGQUIT, SIG_DFL);
     });
     connect(proc, &QProcess::finished, this,
-            [this, proc, path, feMode, remember]() {
-        if (proc->exitStatus() == QProcess::NormalExit
-                && proc->exitCode() == 0) {
+            [this, proc, path, feMode, remember, done]() {
+        const bool ok = proc->exitStatus() == QProcess::NormalExit
+                        && proc->exitCode() == 0;
+        if (ok) {
             if (remember)
                 save(path, feMode);
             current = path;
@@ -213,6 +439,8 @@ void WallpaperPicker::runFeh(const QString &path, const QString &feMode,
                      qPrintable(feMode),
                      qPrintable(proc->readAllStandardError().trimmed()));
         }
+        if (done)
+            done(ok);
         proc->deleteLater();
     });
     proc->start();
@@ -222,7 +450,14 @@ void WallpaperPicker::apply(int index)
 {
     if (index < 0 || index >= entries.size())
         return;
-    runFeh(entries[index].path, mode(), true);
+    const QString path = entries[index].path;
+    const QString feMode = mode();
+    const int ms = WallpaperFade::duration();
+    const bool fading = ms > 0 && m_fade->cover([this, path, feMode, ms]() {
+        runFeh(path, feMode, true, [this, ms](bool ok) { m_fade->reveal(ok, ms); });
+    });
+    if (!fading)
+        runFeh(path, feMode, true);
 }
 
 void WallpaperPicker::restore()

@@ -12,6 +12,14 @@
  * startup -- and how the picker knows which thumbnail to mark as current. An
  * old ~/.fehbg is imported once, when wallpaper.conf does not exist yet.
  *
+ * A pick cross-fades from the old wallpaper to the new one (not the restore
+ * at startup). Each output is covered by a window at the bottom of the stack
+ * showing the old root pixmap; feh sets the new one underneath it, and the
+ * window fades from the old pixmap to feh's before going away, so both ends
+ * are exactly what feh draws, whatever the mode. It is drawing that picom
+ * composites, so it stalls nothing. In shell.conf, wallpaper.fade=off turns
+ * it off and wallpaper.fade_ms sets its length (default 500).
+ *
  * The directory is scanned NON-recursively on purpose -- a `backup/` subtree
  * of old wallpapers lives under it that has no business in the picker. */
 #ifndef FANSHELL_QS_WALLPAPER_H
@@ -25,6 +33,7 @@
 #include <QVector>
 #include <QWidget>
 
+#include <functional>
 
 struct Wallpaper {
     QString path;
@@ -34,6 +43,7 @@ struct Wallpaper {
 };
 
 class WallpaperWindow;
+class WallpaperFade;
 
 class WallpaperPicker : public QObject {
     Q_OBJECT
@@ -80,8 +90,10 @@ signals:
 
 private:
     explicit WallpaperPicker(QObject *parent = nullptr);
-    /* `remember` saves wallpaper.conf once feh has succeeded. */
-    void runFeh(const QString &path, const QString &feMode, bool remember);
+    /* `remember` saves wallpaper.conf once feh has succeeded; `done` gets
+     * whether it did. */
+    void runFeh(const QString &path, const QString &feMode, bool remember,
+                std::function<void(bool)> done = {});
     void save(const QString &path, const QString &feMode);
 
     static constexpr const char *stateName = "wallpaper.conf";
@@ -93,6 +105,7 @@ private:
     void decodeNext();
 
     WallpaperWindow *m_win;
+    WallpaperFade *m_fade;
     QTimer m_decoder;
 };
 

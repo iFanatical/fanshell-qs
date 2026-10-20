@@ -603,6 +603,8 @@ ups.community=public
 | `vpn.tunnels` | number of sequential WireGuard tunnels (`tun1`…`tunN`; default `1`, maximum `32`) |
 | `wallpaper.dir` | wallpaper directory (default `~/Pictures/wallpapers`) |
 | `wallpaper.mode` | feh mode for a new pick: `fill` (default), `center`, `max`, `scale`, `tile`; the current wallpaper keeps the mode it was set with |
+| `wallpaper.fade` | `off` makes a new pick appear at once instead of cross-fading (for weaker machines); default `on` |
+| `wallpaper.fade_ms` | length of that cross-fade in milliseconds (default `500`, up to `10000`) |
 | `weather.unit` | `C` for Celsius, default Fahrenheit |
 | `ups.host` | the UPS's SNMP card; unset, the power pill shows the CPU+GPU estimate instead (see [UPS](#ups)) |
 | `ups.community` | SNMPv1 community (default `public`) |
