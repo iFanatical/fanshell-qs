@@ -13,9 +13,11 @@
 #
 #   [DisplayPort-0+DisplayPort-1]
 #   DisplayPort-0 mode=1920x1080 rate=100.00 pos=0x0 rotate=normal
-#   DisplayPort-1 mode=1920x1080 rate=100.00 pos=1920x0 rotate=normal primary
+#   DisplayPort-1 mode=1920x1080 rate=100.00 pos=1920x0 rotate=normal tearfree=auto primary
 #
 # `mode=auto` means the output's preferred mode; a bare `off` disables it.
+# `tearfree=off|on|auto` sets the driver's TearFree property; without it the
+# output keeps whatever it has.
 # outputs.conf in ~/.config/fanshell-qs is written by the shell's Displays
 # popup; outputs.defaults.conf beside it (linked from the repo) is consulted
 # when outputs.conf has nothing for the current key.
@@ -75,6 +77,7 @@ apply() {
             rate=*) args+=(--rate "${word#rate=}") ;;
             pos=*) args+=(--pos "${word#pos=}") ;;
             rotate=*) args+=(--rotate "${word#rotate=}") ;;
+            tearfree=*) args+=(--set TearFree "${word#tearfree=}") ;;
             primary) args+=(--primary) ;;
             esac
         done

@@ -7,7 +7,7 @@
  * It follows the sun at the machine's location. Like redshift, it is fully
  * day while the sun is 3 degrees or more above the horizon and fully night
  * once it is 6 degrees below, and moves between the two with the sun's
- * height -- some 40 minutes at mid latitudes. Without a location yet it uses
+ * height -- some 40 minutes at mid latitudes, in steps of 150 K. Without a location yet it uses
  * 19:30-20:30 and 06:30-07:30 instead.
  *
  * The location comes from wttr.in by IP, as the weather does, once per

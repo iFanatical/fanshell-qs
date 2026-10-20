@@ -99,6 +99,38 @@ QString rotationName(uint16_t rotation)
     }
 }
 
+xcb_atom_t atom(xcb_connection_t *c, const char *name)
+{
+    xcb_intern_atom_reply_t *r = xcb_intern_atom_reply(
+        c, xcb_intern_atom(c, 1, uint16_t(strlen(name)), name), nullptr);
+    const xcb_atom_t a = r ? r->atom : XCB_ATOM_NONE;
+    free(r);
+    return a;
+}
+
+/* An output's TearFree setting, or empty when it has no such property. */
+QString tearFree(xcb_connection_t *c, xcb_randr_output_t output, xcb_atom_t prop)
+{
+    if (prop == XCB_ATOM_NONE)
+        return QString();
+    QString value;
+    xcb_randr_get_output_property_reply_t *r = xcb_randr_get_output_property_reply(
+        c, xcb_randr_get_output_property(c, output, prop, XCB_ATOM_ATOM, 0, 1, 0, 0),
+        nullptr);
+    if (r && r->type == XCB_ATOM_ATOM && r->format == 32 && r->num_items == 1) {
+        const xcb_atom_t a =
+            *reinterpret_cast<const xcb_atom_t *>(xcb_randr_get_output_property_data(r));
+        if (xcb_get_atom_name_reply_t *n = xcb_get_atom_name_reply(
+                c, xcb_get_atom_name(c, a), nullptr)) {
+            value = QString::fromLatin1(xcb_get_atom_name_name(n),
+                                        xcb_get_atom_name_name_length(n));
+            free(n);
+        }
+    }
+    free(r);
+    return value;
+}
+
 bool sameRate(double a, double b)
 {
     return std::fabs(a - b) < 0.005;
@@ -166,6 +198,7 @@ QVector<Output> Displays::query()
         free(p);
     }
 
+    const xcb_atom_t tearFreeAtom = atom(c, "TearFree");
     const xcb_randr_output_t *ids =
         xcb_randr_get_screen_resources_current_outputs(res);
     const int count = xcb_randr_get_screen_resources_current_outputs_length(res);
@@ -236,6 +269,7 @@ QVector<Output> Displays::query()
             o.rate = o.preferred.rate;
         }
         o.primary = o.enabled && ids[i] == primary;
+        o.tearFree = tearFree(c, ids[i], tearFreeAtom);
         out.push_back(o);
         free(oi);
     }
@@ -269,6 +303,8 @@ QString Displays::profile(const QVector<Output> &outputs)
         if (o.rate > 0)
             s += QStringLiteral(" rate=%1").arg(o.rate, 0, 'f', 2);
         s += QStringLiteral(" pos=%1x%2 rotate=%3").arg(o.x).arg(o.y).arg(o.rotate);
+        if (!o.tearFree.isEmpty())
+            s += QStringLiteral(" tearfree=") + o.tearFree;
         if (o.primary)
             s += QStringLiteral(" primary");
         s += QLatin1Char('\n');
@@ -503,6 +539,10 @@ const QStringList rotations{QStringLiteral("normal"), QStringLiteral("left"),
 const QStringList rotationLabels{QStringLiteral("Normal"),
                                  QStringLiteral("Left"), QStringLiteral("Right"),
                                  QStringLiteral("Upside down")};
+const QStringList tearFreeModes{QStringLiteral("auto"), QStringLiteral("on"),
+                                QStringLiteral("off")};
+const QStringList tearFreeLabels{QStringLiteral("Auto"), QStringLiteral("On"),
+                                 QStringLiteral("Off")};
 
 } /* namespace */
 
@@ -556,6 +596,8 @@ private:
     Selector *m_resolution;
     Selector *m_rate;
     Selector *m_rotation;
+    QWidget *m_tearFreeLabel;
+    Selector *m_tearFree;
     QWidget *m_vibranceLabel;
     QWidget *m_vibranceRow;
     ValueSlider *m_vibrance;
@@ -629,6 +671,10 @@ DisplaysWindow::DisplaysWindow()
     m_resolution = new Selector(m_list, m_box);
     m_rate = new Selector(m_list, m_box);
     m_rotation = new Selector(m_list, m_box);
+    m_tearFree = new Selector(m_list, m_box);
+    m_tearFree->setToolTip(QStringLiteral(
+        "The driver's tear-free page flipping. Auto: only where needed, such "
+        "as a rotated output"));
 
     grid->addWidget(fieldLabel(QStringLiteral("Output"), m_box), 0, 0);
     grid->addWidget(toggles, 0, 1, 1, 3);
@@ -638,6 +684,9 @@ DisplaysWindow::DisplaysWindow()
     grid->addWidget(m_rate, 1, 3);
     grid->addWidget(fieldLabel(QStringLiteral("Rotation"), m_box), 2, 0);
     grid->addWidget(m_rotation, 2, 1);
+    m_tearFreeLabel = fieldLabel(QStringLiteral("TearFree"), m_box);
+    grid->addWidget(m_tearFreeLabel, 2, 2);
+    grid->addWidget(m_tearFree, 2, 3);
 
     /* Vibrance applies (and saves) at once, outside the layout trial. */
     m_vibranceLabel = fieldLabel(QStringLiteral("Vibrance"), m_box);
@@ -729,6 +778,13 @@ DisplaysWindow::DisplaysWindow()
     m_rotation->chosen = [this](int i) {
         if (Output *o = selected())
             resizeSelected(o->w, o->h, rotations.value(i, o->rotate));
+    };
+    m_tearFree->chosen = [this](int i) {
+        Output *o = selected();
+        if (o && i >= 0 && i < tearFreeModes.size()) {
+            o->tearFree = tearFreeModes[i];
+            syncAll();
+        }
     };
 
     connect(m_vibrance, &ValueSlider::moved, this, [this](qreal v) {
@@ -899,9 +955,15 @@ void DisplaysWindow::syncDetails()
     m_rate->setChoices(rates, rateIndex);
     m_rotation->setChoices(rotationLabels,
                            o ? int(rotations.indexOf(o->rotate)) : -1);
+    const bool tearFree = on && !o->tearFree.isEmpty();
+    m_tearFreeLabel->setVisible(tearFree);
+    m_tearFree->setVisible(tearFree);
+    m_tearFree->setChoices(tearFreeLabels,
+                           tearFree ? int(tearFreeModes.indexOf(o->tearFree)) : -1);
     for (QWidget *w : {static_cast<QWidget *>(m_resolution),
                        static_cast<QWidget *>(m_rate),
-                       static_cast<QWidget *>(m_rotation)})
+                       static_cast<QWidget *>(m_rotation),
+                       static_cast<QWidget *>(m_tearFree)})
         w->setEnabled(on && !m_pending && !m_running);
 
     syncVibrance();
@@ -1614,15 +1676,6 @@ namespace {
 constexpr auto lockConf = "lock.conf";
 
 using LockSettings = ScreenLock::Settings;
-
-xcb_atom_t atom(xcb_connection_t *c, const char *name)
-{
-    xcb_intern_atom_reply_t *r = xcb_intern_atom_reply(
-        c, xcb_intern_atom(c, 1, uint16_t(strlen(name)), name), nullptr);
-    const xcb_atom_t a = r ? r->atom : XCB_ATOM_NONE;
-    free(r);
-    return a;
-}
 
 /* Whether the focused window (_NET_ACTIVE_WINDOW) is fullscreen. */
 bool fullscreenFocused(xcb_connection_t *c)

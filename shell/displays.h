@@ -1,5 +1,6 @@
 /* Display settings: output layout (on/off, resolution, refresh, rotation,
- * position, primary) and digital vibrance, in a centred popup.
+ * position, primary, TearFree where the driver has it) and digital vibrance,
+ * in a centred popup.
  *
  *     fanshell-qs-shell ipc call outputs toggle|show|hide
  *
@@ -43,6 +44,9 @@ struct Output {
     double rate = 0;
     QString rotate = QStringLiteral("normal"); /* normal|left|right|inverted */
     bool primary = false;
+    /* The driver's TearFree output property: off|on|auto, or empty when the
+     * driver has none (amdgpu and recent modesetting do). */
+    QString tearFree;
     /* Largest resolution first, then fastest refresh. */
     QVector<Mode> modes;
     Mode preferred;

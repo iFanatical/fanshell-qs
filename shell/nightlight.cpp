@@ -32,6 +32,12 @@ constexpr double nightElevation = -6.0;
 /* Sunrise and sunset proper: the top of the disc on the horizon. */
 constexpr double horizon = -0.833;
 constexpr int fadeMs = 1500;
+/* Writing the ramps holds the X server up until the output's next vblank or
+ * two (amdgpu: some 20-30 ms per CRTC at 100 Hz), freezing the cursor, video
+ * and games meanwhile. So a fade is a few steps rather than every frame, and
+ * the sun's slow drift is written once it has moved this far. */
+constexpr int fadeStepMs = 250;
+constexpr int driftStep = 150;
 
 const QVector<int> nightChoices{2500, 3000, 3500, 4000, 4500, 5000, 5500, 6000};
 const QVector<int> dayChoices{5500, 6000, 6500};
@@ -326,7 +332,7 @@ NightLight::NightLight(QObject *parent) : QObject(parent)
     });
     m_tick.start();
 
-    m_fade.setInterval(30);
+    m_fade.setInterval(fadeStepMs);
     connect(&m_fade, &QTimer::timeout, this, [this]() {
         const double t = std::min(1.0, m_fadeClock.elapsed() / double(fadeMs));
         m_current = m_fadeFrom + (m_fadeTo - m_fadeFrom) * t;
@@ -461,6 +467,10 @@ void NightLight::retarget(bool fade)
         m_fadeTo = goal;
         return;
     }
+    /* Small steps wait until they add up; the ends are written exactly. */
+    if (!fade && std::fabs(goal - m_current) < driftStep && goal != m_settings.night
+        && goal != m_settings.day && goal != neutral)
+        return;
     m_current = goal;
     apply(goal);
 }
