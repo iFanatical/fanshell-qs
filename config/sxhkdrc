@@ -12,7 +12,7 @@ super + Return
 	alacritty
 
 super + e
-	thunar
+	fanfm
 
 super + b
 	gtk-launch "$(xdg-settings get default-web-browser)"
