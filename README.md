@@ -49,7 +49,7 @@ sudo dnf install git gcc gcc-c++ make pkgconf-pkg-config \
     zig libXft-devel libXinerama-devel fontconfig-devel \
     xorg-x11-server-Xorg xorg-x11-xinit picom xrandr sxhkd \
     dbus-tools xdg-desktop-portal xdg-desktop-portal-gtk glib2 \
-    jq xdotool xprop feh NetworkManager bluez brightnessctl \
+    jq xdotool xprop NetworkManager bluez brightnessctl \
     ddcutil power-profiles-daemon wireguard-tools net-snmp-utils curl \
     pipewire-utils alacritty xdg-utils xsetroot xsettingsd \
     mate-polkit
@@ -183,7 +183,6 @@ out or empty.
 
 | What | Fedora | Gentoo | For |
 |---|---|---|---|
-| feh | `feh` | `media-gfx/feh` | setting the wallpaper from the picker, and restoring it at startup |
 | NetworkManager | `NetworkManager` | `net-misc/networkmanager` | the network pill and Wi-Fi list (`nmcli`) |
 | BlueZ | `bluez` | `net-wireless/bluez` | the Bluetooth popup (`bluetoothctl`) |
 | brightnessctl | `brightnessctl` | `app-misc/brightnessctl` | laptop screen and keyboard backlight (the brightness keys, and the System dropdown's keyboard row) |
@@ -235,14 +234,13 @@ Optional, everything above:
 
 ```sh
 # Fedora
-sudo dnf install feh NetworkManager bluez \
+sudo dnf install NetworkManager bluez \
     brightnessctl ddcutil power-profiles-daemon wireguard-tools \
     net-snmp-utils curl pipewire-utils alacritty xdg-utils \
     xsetroot xsettingsd mate-polkit
 
 # Gentoo
-sudo emerge media-gfx/feh \
-    net-misc/networkmanager net-wireless/bluez \
+sudo emerge net-misc/networkmanager net-wireless/bluez \
     app-misc/brightnessctl app-misc/ddcutil sys-power/power-profiles-daemon \
     net-vpn/wireguard-tools net-analyzer/net-snmp net-misc/curl \
     media-video/pipewire x11-terms/alacritty \
@@ -332,7 +330,7 @@ cache loses nothing you chose:
 
 | file | |
 |---|---|
-| `wallpaper.conf` | the picker's last wallpaper and feh mode; re-applied when the shell starts |
+| `wallpaper.conf` | the picker's wallpaper and mode for every output (`path`, `mode`) and for any output that differs (`path.<output>`, `mode.<output>`); drawn when the shell starts and when the outputs change |
 | `vibrance.conf` | digital vibrance per output; re-applied at start and when an output connects |
 | `outputs.conf` | output layouts, one per set of connected outputs; applied at login (`fanshell-qs-session`) and on hotplug |
 | `dpms.conf` | screen blanking and DPMS timeouts; applied at startup |
@@ -343,7 +341,9 @@ cache loses nothing you chose:
 | `websites.json` | linked from the repo (above) |
 | `sounds/` | optional `audio-volume-change.*` for volume feedback |
 
-The shell runs feh with `--no-fehbg`, so it no longer writes `~/.fehbg`. If
+The shell draws the wallpaper itself (no feh) and sets it as the root
+window's background, published in `_XROOTPMAP_ID` for picom. The picker's
+"Apply to" drop-down sets it for every output or for one. If
 `wallpaper.conf` does not exist yet, the path in an old `~/.fehbg` is imported
 once. After that, `~/.fehbg` can be deleted. Runtime-only state (IPC sockets,
 scratchpad window ids, the `maximize` layout memo) stays in
@@ -573,7 +573,7 @@ counterparts need porting by hand:
 | `hyprstate.*` | `wmstate.*` (the window-manager-neutral model every widget uses), with `oxwmstate.*` and `qtilestate.*` as its backends |
 | `wlutil.*` | `surface.*` |
 | `clipboard.cpp` (`wl-paste`) | `clipboard.cpp` (`QClipboard`) |
-| `wallpaper.cpp` (`awww`) | `wallpaper.cpp` (`feh`) |
+| `wallpaper.cpp` (`awww`) | `wallpaper.cpp` (draws the root background itself) |
 | `panel.cpp` workspaces, `pills.*` submap | tags, layout pill |
 
 Update the commit in this README when you do.
@@ -602,7 +602,7 @@ ups.community=public
 |---|---|
 | `vpn.tunnels` | number of sequential WireGuard tunnels (`tun1`…`tunN`; default `1`, maximum `32`) |
 | `wallpaper.dir` | wallpaper directory (default `~/Pictures/wallpapers`) |
-| `wallpaper.mode` | feh mode for a new pick: `fill` (default), `center`, `max`, `scale`, `tile`; the current wallpaper keeps the mode it was set with |
+| `wallpaper.mode` | how a new pick is laid out on an output, as feh's modes: `fill` (default), `center`, `max`, `scale`, `tile`; what is already set keeps the mode it was set with |
 | `wallpaper.fade` | `off` makes a new pick appear at once instead of cross-fading (for weaker machines); default `on` |
 | `wallpaper.fade_ms` | length of that cross-fade in milliseconds (default `500`, up to `10000`) |
 | `weather.unit` | `C` for Celsius, default Fahrenheit |

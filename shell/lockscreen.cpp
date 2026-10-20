@@ -61,6 +61,7 @@
 #include "procutil.h"
 #include "surface.h"
 #include "theme.h"
+#include "wallpaper.h"
 
 namespace {
 
@@ -208,11 +209,9 @@ void boxBlur(QImage &img, int radius)
     }
 }
 
-/* The saved wallpaper, decoded small: it is blurred heavily anyway. */
-QImage wallpaperImage()
+/* A wallpaper, decoded small: it is blurred heavily anyway. */
+QImage wallpaperImage(const QString &path)
 {
-    const QString path = Paths::readConf(QStringLiteral("wallpaper.conf"))
-                             .value(QStringLiteral("path"));
     if (path.isEmpty())
         return QImage();
     QImageReader reader(path);
@@ -385,7 +384,7 @@ public:
         }
         m_service = pamService();
         m_avatar = avatarImage(m_user);
-        m_wallpaper = wallpaperImage();
+        m_wallpapers = Wallpapers::Config::load();
 
         const QHash<QString, QString> conf = Paths::readConf(QStringLiteral("lock.conf"));
         m_displayOffSecs = conf.value(QStringLiteral("display_off"),
@@ -672,12 +671,24 @@ private:
         xcb_flush(c);
     }
 
-    const QPixmap &background(const QSize &size)
+    /* The wallpaper of `w`'s output, blurred to its size. */
+    const QPixmap &background(LockWindow *w)
     {
-        const quint64 key = (quint64(quint32(size.width())) << 32) | quint32(size.height());
+        const QString path = m_wallpapers
+                                 .forOutput(w->lockScreen() ? w->lockScreen()->name()
+                                                            : QString())
+                                 .path;
+        const QString key = QStringLiteral("%1\n%2x%3")
+                                .arg(path)
+                                .arg(w->width())
+                                .arg(w->height());
         auto it = m_backgrounds.find(key);
-        if (it == m_backgrounds.end())
-            it = m_backgrounds.insert(key, blurredBackground(m_wallpaper, size));
+        if (it == m_backgrounds.end()) {
+            auto img = m_images.find(path);
+            if (img == m_images.end())
+                img = m_images.insert(path, wallpaperImage(path));
+            it = m_backgrounds.insert(key, blurredBackground(*img, w->size()));
+        }
         return *it;
     }
 
@@ -914,8 +925,9 @@ private:
     QString m_fullName;
     QByteArray m_service;
     QImage m_avatar;
-    QImage m_wallpaper;
-    QHash<quint64, QPixmap> m_backgrounds;
+    Wallpapers::Config m_wallpapers;
+    QHash<QString, QImage> m_images;
+    QHash<QString, QPixmap> m_backgrounds;
 
     QVector<LockWindow *> m_windows;
     LockWindow *m_primary = nullptr;
@@ -964,7 +976,7 @@ private:
 void Locker::paint(LockWindow *w, QPainter &p)
 {
     const QRectF r = w->rect();
-    p.drawPixmap(0, 0, background(w->size()));
+    p.drawPixmap(0, 0, background(w));
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::TextAntialiasing);
 

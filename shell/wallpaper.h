@@ -1,4 +1,4 @@
-/* Wallpaper picker, backed by feh.
+/* Wallpapers, drawn by the shell itself, and their picker.
  *
  * A fullscreen overlay in the launcher's mould: a centred box holding a grid
  * of thumbnails, keyboard-navigable, dismissed with Escape or a click outside
@@ -6,25 +6,35 @@
  *
  *     fanshell-qs-shell ipc call wallpaper toggle|show|hide
  *
- * `feh --no-fehbg --bg-<mode> <path>` sets the root window background on
- * every output. The choice is recorded in wallpaper.conf (Paths::configDir()),
- * which is both how it survives a reboot -- the shell re-applies it at
- * startup -- and how the picker knows which thumbnail to mark as current. An
- * old ~/.fehbg is imported once, when wallpaper.conf does not exist yet.
+ * Each output gets its image laid out in one of feh's modes (fill, center,
+ * max, scale, tile), decoded off the GUI thread, and the result becomes the
+ * root window's background pixmap, published as _XROOTPMAP_ID and
+ * ESETROOT_PMAP_ID for picom and the like. The pixmap is made on an X
+ * connection of its own that closes with RetainPermanent, so it outlives the
+ * shell; the next wallpaper frees it, as feh and hsetroot do.
  *
- * A pick cross-fades from the old wallpaper to the new one (not the restore
- * at startup). Each output is covered by a window at the bottom of the stack
- * showing the old root pixmap; feh sets the new one underneath it, and the
- * window fades from the old pixmap to feh's before going away, so both ends
- * are exactly what feh draws, whatever the mode. It is drawing that picom
- * composites, so it stalls nothing. In shell.conf, wallpaper.fade=off turns
- * it off and wallpaper.fade_ms sets its length (default 500).
+ * The picker's "Apply to" drop-down sets the wallpaper of every output or of
+ * one. wallpaper.conf (Paths::configDir()) records the choice: path= and
+ * mode= for every output, and path.<output>= and mode.<output>= for one that
+ * differs. The shell draws it again at startup and whenever the outputs
+ * change. An old ~/.fehbg is imported once, when wallpaper.conf does not
+ * exist yet.
+ *
+ * A pick cross-fades from the old wallpaper to the new one (not the drawing
+ * at startup or after an output change). Each output is covered by a window
+ * at the bottom of the stack showing the old root pixmap; the new one is set
+ * underneath it, and the window fades to it before going away. It is drawing
+ * that picom composites, so it stalls nothing. In shell.conf,
+ * wallpaper.fade=off turns it off and wallpaper.fade_ms sets its length
+ * (default 500).
  *
  * The directory is scanned NON-recursively on purpose -- a `backup/` subtree
  * of old wallpapers lives under it that has no business in the picker. */
 #ifndef FANSHELL_QS_WALLPAPER_H
 #define FANSHELL_QS_WALLPAPER_H
 
+#include <QHash>
+#include <QImage>
 #include <QPixmap>
 #include <QPointer>
 #include <QScreen>
@@ -33,7 +43,29 @@
 #include <QVector>
 #include <QWidget>
 
-#include <functional>
+namespace Wallpapers {
+
+struct Choice {
+    QString path;
+    QString mode;
+};
+
+/* wallpaper.conf: one choice for every output, and those that differ. */
+struct Config {
+    Choice all;
+    QHash<QString, Choice> outputs;
+
+    Choice forOutput(const QString &output) const;
+    static Config load();
+    void save() const;
+};
+
+/* `path` laid out in a box of `size` as feh --bg-<mode> lays it out on one
+ * output, black where it leaves room; null when it cannot be read. Safe off
+ * the GUI thread. */
+QImage render(const QString &path, const QString &mode, const QSize &size);
+
+} /* namespace Wallpapers */
 
 struct Wallpaper {
     QString path;
@@ -53,19 +85,23 @@ public:
     /* Directory scanned for wallpapers: wallpaper.dir in shell.conf, else
      * ~/Pictures/wallpapers. */
     static QString wallpaperDir();
-    /* feh --bg-<mode> for a new pick: wallpaper.mode in shell.conf, one of
-     * fill (default), center, max, scale or tile. */
+    /* The mode for a new pick: wallpaper.mode in shell.conf, one of fill
+     * (default), center, max, scale or tile. */
     static QString mode();
 
     QVector<Wallpaper> entries;
     int selected = 0;
-    /* Path wallpaper.conf records as displayed, so the picker can mark it. */
-    QString current;
+    /* The output a pick applies to, by name; empty for every output. */
+    QString target;
+
+    /* Whether `path` is showing on the target (on any output, for all). */
+    bool isCurrent(const QString &path) const;
+    /* The outputs connected now, by name, for the "Apply to" list. */
+    static QStringList outputNames();
 
     void rescan();
-    void refreshCurrent();
     void apply(int index);
-    /* Re-apply the saved wallpaper; done once at startup. */
+    /* Draw wallpaper.conf again; done at startup and after output changes. */
     void restore();
     void move(int delta);
     void syncSelectionToCurrent();
@@ -90,13 +126,12 @@ signals:
 
 private:
     explicit WallpaperPicker(QObject *parent = nullptr);
-    /* `remember` saves wallpaper.conf once feh has succeeded; `done` gets
-     * whether it did. */
-    void runFeh(const QString &path, const QString &feMode, bool remember,
-                std::function<void(bool)> done = {});
-    void save(const QString &path, const QString &feMode);
+    /* Lay `conf` out on every output off the GUI thread, then make it the
+     * root background -- cross-fading when `fade` -- and keep it (saving
+     * wallpaper.conf when `save`). Left as it was if an image cannot be
+     * read. */
+    void draw(const Wallpapers::Config &conf, bool fade, bool save);
 
-    static constexpr const char *stateName = "wallpaper.conf";
     /* Decodes one pending thumbnail per event-loop turn. Decoding all of them
      * at once costs a few hundred ms even with scaled reads, which would be a
      * visible hitch; spreading it keeps the UI responsive and, since this
@@ -104,9 +139,14 @@ private:
      * first opened. */
     void decodeNext();
 
+    Wallpapers::Config m_conf;
     WallpaperWindow *m_win;
     WallpaperFade *m_fade;
     QTimer m_decoder;
+    /* Outputs added, removed or moved: draw again once RandR settles. */
+    QTimer m_outputsChanged;
+    /* Bumped per draw(), so only the latest one's result is used. */
+    int m_generation = 0;
 };
 
 /* The results grid: fixed columns, scrolls when it overflows. */
@@ -133,6 +173,10 @@ private:
     int m_scroll = 0;
 };
 
+class ChoiceList;
+class Selector;
+class TextItem;
+
 class WallpaperWindow : public QWidget {
     Q_OBJECT
 public:
@@ -148,9 +192,13 @@ protected:
 
 private:
     void layoutBox();
+    void syncTarget();
 
     WallpaperPicker *m_p;
     WallpaperGrid *m_grid;
+    TextItem *m_targetLabel;
+    Selector *m_target;
+    ChoiceList *m_list;
     /* Configured before its first map and re-placed when the picker moves
      * output -- see WallpaperWindow::openOn(). */
     bool m_configured = false;

@@ -9,28 +9,60 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
-#include <QProcess>
 #include <QStandardPaths>
+#include <QThread>
 #include <QVariantAnimation>
 #include <QWheelEvent>
 
 #include <xcb/xcb.h>
 
 #include <algorithm>
-#include <csignal>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
 
-#include "wmstate.h"
+#include "overlay.h"
 #include "paths.h"
 #include "popup.h"
-#include "theme.h"
 #include "surface.h"
-
-/* ------------------------------------------------------------ WallpaperFade */
+#include "theme.h"
+#include "widgets.h"
+#include "wmstate.h"
 
 namespace {
+
+constexpr auto stateName = "wallpaper.conf";
+
+const QStringList modes{QStringLiteral("fill"), QStringLiteral("center"),
+                        QStringLiteral("max"), QStringLiteral("scale"),
+                        QStringLiteral("tile")};
+
+QString validMode(const QString &mode, const QString &fallback)
+{
+    const QString m = mode.toLower();
+    return modes.contains(m) ? m : fallback;
+}
+
+/* The path the last feh-written ~/.fehbg shows, for a one-time import. It is
+ * a shell script whose last word is the image:
+ *     feh --no-fehbg --bg-fill '/path/to/file.jpg' */
+QString fehbgPath()
+{
+    QFile file(QDir::homePath() + QStringLiteral("/.fehbg"));
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+        return QString();
+    QString path;
+    for (const QString &raw : QString::fromUtf8(file.readAll()).split('\n')) {
+        const QString line = raw.trimmed();
+        if (!line.contains(QLatin1String("feh")) || !line.endsWith('\''))
+            continue;
+        const int open = line.lastIndexOf('\'', line.size() - 2);
+        if (open >= 0)
+            path = line.mid(open + 1, line.size() - open - 2);
+    }
+    return path;
+}
 
 xcb_connection_t *conn()
 {
@@ -38,39 +70,77 @@ xcb_connection_t *conn()
     return x11 ? x11->connection() : nullptr;
 }
 
-/* The root window's background as wallpaper setters publish it
- * (_XROOTPMAP_ID), or a null image when there is none or it is not the
- * usual 24-bit, 32 bits-per-pixel little-endian kind. */
-QImage rootBackground()
+xcb_atom_t atom(xcb_connection_t *c, const char *name, bool create)
 {
-    xcb_connection_t *c = conn();
-    if (!c)
-        return QImage();
-    const xcb_setup_t *setup = xcb_get_setup(c);
-    const xcb_screen_t *screen = xcb_setup_roots_iterator(setup).data;
-    if (setup->image_byte_order != XCB_IMAGE_ORDER_LSB_FIRST)
-        return QImage();
+    xcb_intern_atom_reply_t *r = xcb_intern_atom_reply(
+        c, xcb_intern_atom(c, !create, uint16_t(strlen(name)), name), nullptr);
+    const xcb_atom_t a = r ? r->atom : XCB_ATOM_NONE;
+    free(r);
+    return a;
+}
 
-    const char name[] = "_XROOTPMAP_ID";
-    xcb_intern_atom_reply_t *a = xcb_intern_atom_reply(
-        c, xcb_intern_atom(c, 1, uint16_t(strlen(name)), name), nullptr);
-    const xcb_atom_t atom = a ? a->atom : XCB_ATOM_NONE;
-    free(a);
-    if (atom == XCB_ATOM_NONE)
-        return QImage();
+xcb_pixmap_t pixmapProperty(xcb_connection_t *c, xcb_window_t root, xcb_atom_t prop)
+{
     xcb_pixmap_t pixmap = XCB_NONE;
+    if (prop == XCB_ATOM_NONE)
+        return pixmap;
     if (xcb_get_property_reply_t *p = xcb_get_property_reply(
-            c, xcb_get_property(c, 0, screen->root, atom, XCB_ATOM_PIXMAP, 0, 1),
-            nullptr)) {
+            c, xcb_get_property(c, 0, root, prop, XCB_ATOM_PIXMAP, 0, 1), nullptr)) {
         if (p->type == XCB_ATOM_PIXMAP && p->format == 32
                 && xcb_get_property_value_length(p) == 4)
             pixmap = *static_cast<const xcb_pixmap_t *>(xcb_get_property_value(p));
         free(p);
     }
-    if (pixmap == XCB_NONE)
-        return QImage();
+    return pixmap;
+}
 
-    const int w = screen->width_in_pixels, h = screen->height_in_pixels;
+/* Whether images of `depth` are 32 bits a pixel, little-endian: what a
+ * Format_RGB32 QImage holds, byte for byte. */
+bool rgb32Server(xcb_connection_t *c, uint8_t depth)
+{
+    const xcb_setup_t *setup = xcb_get_setup(c);
+    if (setup->image_byte_order != XCB_IMAGE_ORDER_LSB_FIRST)
+        return false;
+    for (auto it = xcb_setup_pixmap_formats_iterator(setup); it.rem;
+         xcb_format_next(&it))
+        if (it.data->depth == depth)
+            return it.data->bits_per_pixel == 32;
+    return false;
+}
+
+QSize rootSize(xcb_connection_t *c, xcb_window_t root)
+{
+    QSize size;
+    if (xcb_get_geometry_reply_t *g =
+            xcb_get_geometry_reply(c, xcb_get_geometry(c, root), nullptr)) {
+        size = QSize(g->width, g->height);
+        free(g);
+    }
+    return size;
+}
+
+/* The root window's background as wallpaper setters publish it
+ * (_XROOTPMAP_ID), or a null image when there is none or it is not 24-bit
+ * RGB32. */
+QImage rootBackground()
+{
+    xcb_connection_t *c = conn();
+    if (!c)
+        return QImage();
+    const xcb_window_t root = xcb_setup_roots_iterator(xcb_get_setup(c)).data->root;
+    const xcb_pixmap_t pixmap =
+        pixmapProperty(c, root, atom(c, "_XROOTPMAP_ID", false));
+    if (pixmap == XCB_NONE || !rgb32Server(c, 24))
+        return QImage();
+    QSize size;
+    if (xcb_get_geometry_reply_t *g =
+            xcb_get_geometry_reply(c, xcb_get_geometry(c, pixmap), nullptr)) {
+        size = QSize(g->width, g->height);
+        free(g);
+    }
+    if (size.isEmpty())
+        return QImage();
+    const int w = size.width(), h = size.height();
     xcb_get_image_reply_t *img = xcb_get_image_reply(
         c, xcb_get_image(c, XCB_IMAGE_FORMAT_Z_PIXMAP, pixmap, 0, 0, uint16_t(w),
                          uint16_t(h), ~0u),
@@ -78,9 +148,7 @@ QImage rootBackground()
     if (!img)
         return QImage();
     QImage out;
-    const int len = xcb_get_image_data_length(img);
-    if (img->depth == 24 && len == w * h * 4) {
-        /* BGRX bytes: Format_RGB32 on a little-endian machine. */
+    if (img->depth == 24 && xcb_get_image_data_length(img) == w * h * 4) {
         out = QImage(w, h, QImage::Format_RGB32);
         for (int y = 0; y < h; y++)
             memcpy(out.scanLine(y), xcb_get_image_data(img) + y * w * 4, size_t(w) * 4);
@@ -88,6 +156,66 @@ QImage rootBackground()
     free(img);
     return out;
 }
+
+/* Make `image` the root window's background, as feh and hsetroot do: a
+ * pixmap made on a connection of its own, kept after it closes
+ * (RetainPermanent) and published in _XROOTPMAP_ID and ESETROOT_PMAP_ID.
+ * The previous one, when a setter like this left it, is freed by killing
+ * its (closed) client. */
+bool setRootPixmap(const QImage &image)
+{
+    xcb_connection_t *c = xcb_connect(nullptr, nullptr);
+    if (xcb_connection_has_error(c)) {
+        xcb_disconnect(c);
+        return false;
+    }
+    const xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(c)).data;
+    const xcb_window_t root = screen->root;
+    const QImage img = image.convertToFormat(QImage::Format_RGB32);
+    const int w = img.width(), h = img.height();
+    if (screen->root_depth != 24 || !rgb32Server(c, 24) || w <= 0 || h <= 0
+            || w > 65535 || h > 65535) {
+        xcb_disconnect(c);
+        return false;
+    }
+
+    const xcb_pixmap_t pixmap = xcb_generate_id(c);
+    xcb_create_pixmap(c, screen->root_depth, pixmap, root, uint16_t(w), uint16_t(h));
+    const xcb_gcontext_t gc = xcb_generate_id(c);
+    xcb_create_gc(c, gc, pixmap, 0, nullptr);
+    /* In bands that fit one request. */
+    const uint32_t maxBytes = xcb_get_maximum_request_length(c) * 4 - 64;
+    const int band = qMax(1, int(maxBytes / uint32_t(w * 4)));
+    for (int y = 0; y < h; y += band) {
+        const int rows = qMin(band, h - y);
+        xcb_put_image(c, XCB_IMAGE_FORMAT_Z_PIXMAP, pixmap, gc, uint16_t(w),
+                      uint16_t(rows), 0, int16_t(y), 0, screen->root_depth,
+                      uint32_t(rows * w * 4), img.constScanLine(y));
+    }
+    xcb_free_gc(c, gc);
+
+    const xcb_atom_t rootPmap = atom(c, "_XROOTPMAP_ID", true);
+    const xcb_atom_t esetroot = atom(c, "ESETROOT_PMAP_ID", true);
+    const xcb_pixmap_t old = pixmapProperty(c, root, rootPmap);
+    const bool oldIsOurs = old != XCB_NONE && old == pixmapProperty(c, root, esetroot);
+
+    xcb_change_window_attributes(c, root, XCB_CW_BACK_PIXMAP, &pixmap);
+    xcb_clear_area(c, 0, root, 0, 0, 0, 0);
+    for (xcb_atom_t prop : {rootPmap, esetroot})
+        xcb_change_property(c, XCB_PROP_MODE_REPLACE, root, prop, XCB_ATOM_PIXMAP,
+                            32, 1, &pixmap);
+    if (oldIsOurs)
+        xcb_kill_client(c, old);
+    xcb_set_close_down_mode(c, XCB_CLOSE_DOWN_RETAIN_PERMANENT);
+    free(xcb_get_input_focus_reply(c, xcb_get_input_focus(c), nullptr));
+    xcb_disconnect(c);
+    return true;
+}
+
+struct Head {
+    QString name;
+    QRect rect;
+};
 
 /* One output's part of the fade: an override-redirect window at the bottom
  * of the stack, above the root background and below every other window.
@@ -143,7 +271,100 @@ private:
 
 } /* namespace */
 
-/* Covers the outputs with the old wallpaper while feh sets the new one, then
+/* ------------------------------------------------------------- Wallpapers */
+
+Wallpapers::Choice Wallpapers::Config::forOutput(const QString &output) const
+{
+    Choice c = outputs.value(output, all);
+    if (c.path.isEmpty())
+        c.path = all.path;
+    c.mode = validMode(c.mode, validMode(all.mode, QStringLiteral("fill")));
+    return c;
+}
+
+Wallpapers::Config Wallpapers::Config::load()
+{
+    Config conf;
+    const QHash<QString, QString> kv = Paths::readConf(QLatin1String(stateName));
+    conf.all = {kv.value(QStringLiteral("path")), kv.value(QStringLiteral("mode"))};
+    for (auto it = kv.constBegin(); it != kv.constEnd(); ++it) {
+        if (it.key().startsWith(QLatin1String("path.")))
+            conf.outputs[it.key().mid(5)].path = it.value();
+        else if (it.key().startsWith(QLatin1String("mode.")))
+            conf.outputs[it.key().mid(5)].mode = it.value();
+    }
+    return conf;
+}
+
+void Wallpapers::Config::save() const
+{
+    QStringList lines{QStringLiteral("path=") + all.path,
+                      QStringLiteral("mode=") + all.mode};
+    QStringList names = outputs.keys();
+    names.sort();
+    for (const QString &name : std::as_const(names)) {
+        const Choice &c = outputs[name];
+        lines << QStringLiteral("path.%1=%2").arg(name, c.path)
+              << QStringLiteral("mode.%1=%2").arg(name, c.mode);
+    }
+    if (!Paths::writeConf(QLatin1String(stateName),
+                          QStringLiteral("Wallpapers set from the picker; the shell "
+                                         "draws them at startup.\npath/mode: every "
+                                         "output; path.<output>/mode.<output>: one "
+                                         "that differs."),
+                          lines))
+        qWarning("fanshell-qs: cannot write %s",
+                 qPrintable(Paths::configFile(QLatin1String(stateName))));
+}
+
+QImage Wallpapers::render(const QString &path, const QString &mode, const QSize &size)
+{
+    if (path.isEmpty() || size.isEmpty())
+        return QImage();
+    QImageReader reader(path);
+    reader.setAutoTransform(true);
+    /* Have the decoder shrink what will be shrunk anyway; much cheaper for
+     * large JPEGs than decoding at full size. */
+    const QSize raw = reader.size();
+    if (raw.isValid() && (mode == QLatin1String("fill") || mode == QLatin1String("max")
+                          || mode == QLatin1String("scale"))) {
+        QSize shown = raw;
+        if (reader.transformation() & QImageIOHandler::TransformationRotate90)
+            shown.transpose();
+        const double fx = double(size.width()) / shown.width();
+        const double fy = double(size.height()) / shown.height();
+        const double f = mode == QLatin1String("max") ? qMin(fx, fy) : qMax(fx, fy);
+        if (f < 1.0)
+            reader.setScaledSize(QSize(qMax(1, int(std::ceil(raw.width() * f))),
+                                       qMax(1, int(std::ceil(raw.height() * f)))));
+    }
+    const QImage img = reader.read();
+    if (img.isNull())
+        return QImage();
+
+    QImage out(size, QImage::Format_RGB32);
+    out.fill(Qt::black);
+    QPainter p(&out);
+    auto centred = [&p, &size](const QImage &i) {
+        p.drawImage((size.width() - i.width()) / 2, (size.height() - i.height()) / 2, i);
+    };
+    if (mode == QLatin1String("center"))
+        centred(img);
+    else if (mode == QLatin1String("tile"))
+        p.fillRect(out.rect(), QBrush(img));
+    else if (mode == QLatin1String("scale"))
+        p.drawImage(0, 0, img.scaled(size, Qt::IgnoreAspectRatio, Qt::SmoothTransformation));
+    else if (mode == QLatin1String("max"))
+        centred(img.scaled(size, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    else
+        centred(img.scaled(size, Qt::KeepAspectRatioByExpanding, Qt::SmoothTransformation));
+    p.end();
+    return out;
+}
+
+/* ------------------------------------------------------------ WallpaperFade */
+
+/* Covers the outputs with the old wallpaper while the new one is set, then
  * cross-fades to it. See wallpaper.h. */
 class WallpaperFade : public QObject {
 public:
@@ -184,7 +405,7 @@ public:
         if (root.isNull())
             return false;
         /* Once, when every window has painted -- or after half a second
-         * regardless, so a window that is never exposed cannot hold feh up. */
+         * regardless, so a window that is never exposed cannot hold it up. */
         auto once = std::make_shared<std::function<void()>>(std::move(covered));
         auto fire = [once]() {
             if (*once) {
@@ -216,10 +437,9 @@ public:
         return !m_windows.isEmpty();
     }
 
-    /* feh is done: fade to what it set, or just uncover if it failed. */
-    void reveal(bool changed, int ms)
+    /* The new wallpaper is set: fade to `root`, or just uncover. */
+    void reveal(const QImage &root, int ms)
     {
-        const QImage root = changed ? rootBackground() : QImage();
         if (root.isNull()) {
             clear();
             return;
@@ -261,11 +481,17 @@ QString WallpaperPicker::wallpaperDir()
 
 QString WallpaperPicker::mode()
 {
-    static const QStringList modes{
-        QStringLiteral("fill"), QStringLiteral("center"), QStringLiteral("max"),
-        QStringLiteral("scale"), QStringLiteral("tile")};
-    const QString mode = Paths::setting(QStringLiteral("wallpaper.mode")).toLower();
-    return modes.contains(mode) ? mode : QStringLiteral("fill");
+    return validMode(Paths::setting(QStringLiteral("wallpaper.mode")),
+                     QStringLiteral("fill"));
+}
+
+QStringList WallpaperPicker::outputNames()
+{
+    QStringList names;
+    for (QScreen *s : QGuiApplication::screens())
+        names << s->name();
+    names.sort();
+    return names;
 }
 
 WallpaperPicker::WallpaperPicker(QObject *parent) : QObject(parent)
@@ -277,8 +503,32 @@ WallpaperPicker::WallpaperPicker(QObject *parent) : QObject(parent)
     m_decoder.setInterval(0);
     connect(&m_decoder, &QTimer::timeout, this, &WallpaperPicker::decodeNext);
 
+    m_outputsChanged.setSingleShot(true);
+    m_outputsChanged.setInterval(1000);
+    connect(&m_outputsChanged, &QTimer::timeout, this, &WallpaperPicker::restore);
+    auto watch = [this](QScreen *s) {
+        connect(s, &QScreen::geometryChanged, &m_outputsChanged,
+                qOverload<>(&QTimer::start));
+    };
+    for (QScreen *s : QGuiApplication::screens())
+        watch(s);
+    connect(qApp, &QGuiApplication::screenAdded, this, [this, watch](QScreen *s) {
+        watch(s);
+        m_outputsChanged.start();
+    });
+    connect(qApp, &QGuiApplication::screenRemoved, &m_outputsChanged,
+            qOverload<>(&QTimer::start));
+
+    m_conf = Wallpapers::Config::load();
+    if (m_conf.all.path.isEmpty() && m_conf.outputs.isEmpty()) {
+        /* First run since the state moved out of ~/.fehbg: carry it over. */
+        m_conf.all = {fehbgPath(), mode()};
+        if (!m_conf.all.path.isEmpty())
+            m_conf.save();
+    }
+
     rescan();
-    refreshCurrent();
+    syncSelectionToCurrent();
     restore();
 }
 
@@ -357,128 +607,111 @@ void WallpaperPicker::decodeNext()
     m_decoder.stop();
 }
 
-/* The path the last feh-written ~/.fehbg shows, for a one-time import. It is
- * a shell script whose last word is the image:
- *     feh --no-fehbg --bg-fill '/path/to/file.jpg' */
-static QString fehbgPath()
+bool WallpaperPicker::isCurrent(const QString &path) const
 {
-    QFile file(QDir::homePath() + QStringLiteral("/.fehbg"));
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
-        return QString();
-    QString path;
-    for (const QString &raw : QString::fromUtf8(file.readAll()).split('\n')) {
-        const QString line = raw.trimmed();
-        if (!line.contains(QLatin1String("feh")) || !line.endsWith('\''))
-            continue;
-        const int open = line.lastIndexOf('\'', line.size() - 2);
-        if (open >= 0)
-            path = line.mid(open + 1, line.size() - open - 2);
-    }
-    return path;
+    if (!target.isEmpty())
+        return m_conf.forOutput(target).path == path;
+    for (const QString &name : outputNames())
+        if (m_conf.forOutput(name).path == path)
+            return true;
+    return false;
 }
 
-void WallpaperPicker::save(const QString &path, const QString &feMode)
+void WallpaperPicker::draw(const Wallpapers::Config &conf, bool fade, bool save)
 {
-    if (!Paths::writeConf(QLatin1String(stateName),
-                          QStringLiteral("Wallpaper set from the picker; the "
-                                         "shell restores it at startup."),
-                          {QStringLiteral("path=") + path,
-                           QStringLiteral("mode=") + feMode}))
-        qWarning("fanshell-qs: cannot write %s",
-                 qPrintable(Paths::configFile(QLatin1String(stateName))));
-}
-
-void WallpaperPicker::refreshCurrent()
-{
-    /* Every output carries the same wallpaper, so one path is enough to mark
-     * the active cell. */
-    QString path = Paths::readConf(QLatin1String(stateName))
-                       .value(QStringLiteral("path"));
-    if (path.isEmpty()) {
-        /* First run since the state moved out of ~/.fehbg: carry it over. */
-        path = fehbgPath();
-        if (!path.isEmpty())
-            save(path, mode());
-    }
-    if (path.isEmpty() || current == path)
+    xcb_connection_t *c = conn();
+    if (!c)
         return;
-    current = path;
-    /* Park the cursor on whatever is actually displayed, so opening the
-     * picker starts from where you are. Only while closed -- never yank a
-     * selection the user is in the middle of moving. */
-    if (!m_win->isVisible())
-        syncSelectionToCurrent();
-    emit changed();
-}
+    const QSize size =
+        rootSize(c, xcb_setup_roots_iterator(xcb_get_setup(c)).data->root);
+    QVector<Head> heads;
+    for (QScreen *s : QGuiApplication::screens())
+        heads.push_back({s->name(), s->geometry()});
+    if (size.isEmpty() || heads.isEmpty())
+        return;
 
-void WallpaperPicker::runFeh(const QString &path, const QString &feMode,
-                             bool remember, std::function<void(bool)> done)
-{
-    /* feh sets every output. --no-fehbg: the choice is kept in
-     * wallpaper.conf, not in a script feh would drop into $HOME. */
-    auto *proc = new QProcess(this);
-    proc->setProgram(QStringLiteral("feh"));
-    proc->setArguments({QStringLiteral("--no-fehbg"),
-                        QStringLiteral("--bg-") + feMode, path});
-    proc->setChildProcessModifier([]() {
-        signal(SIGCHLD, SIG_DFL);
-        signal(SIGINT, SIG_DFL);
-        signal(SIGQUIT, SIG_DFL);
-    });
-    connect(proc, &QProcess::finished, this,
-            [this, proc, path, feMode, remember, done]() {
-        const bool ok = proc->exitStatus() == QProcess::NormalExit
-                        && proc->exitCode() == 0;
-        if (ok) {
-            if (remember)
-                save(path, feMode);
-            current = path;
-            emit changed();
-        } else {
-            qWarning("fanshell-qs: feh --bg-%s failed (%s)",
-                     qPrintable(feMode),
-                     qPrintable(proc->readAllStandardError().trimmed()));
+    /* Decoding a large image takes a few hundred ms: off the GUI thread,
+     * so the bar does not freeze meanwhile. */
+    const int generation = ++m_generation;
+    auto root = std::make_shared<QImage>();
+    auto failed = std::make_shared<QString>();
+    QThread *thread = QThread::create([conf, heads, size, root, failed]() {
+        QImage out(size, QImage::Format_RGB32);
+        out.fill(Qt::black);
+        QPainter p(&out);
+        QHash<QString, QImage> done;
+        for (const Head &h : heads) {
+            const Wallpapers::Choice choice = conf.forOutput(h.name);
+            if (choice.path.isEmpty())
+                continue;
+            const QString key = QStringLiteral("%1\n%2\n%3x%4").arg(
+                choice.path, choice.mode).arg(h.rect.width()).arg(h.rect.height());
+            auto it = done.find(key);
+            if (it == done.end())
+                it = done.insert(key, Wallpapers::render(choice.path, choice.mode,
+                                                         h.rect.size()));
+            if (it->isNull()) {
+                *failed = choice.path;
+                return;
+            }
+            p.drawImage(h.rect.topLeft(), *it);
         }
-        if (done)
-            done(ok);
-        proc->deleteLater();
+        p.end();
+        *root = out;
     });
-    proc->start();
+    connect(thread, &QThread::finished, this,
+            [this, thread, conf, fade, save, generation, root, failed]() {
+        thread->deleteLater();
+        if (generation != m_generation)
+            return;
+        if (!failed->isEmpty()) {
+            qWarning("fanshell-qs: cannot read wallpaper %s", qPrintable(*failed));
+            return;
+        }
+        if (root->isNull())
+            return;
+        m_conf = conf;
+        if (save)
+            m_conf.save();
+        emit changed();
+        const QImage image = *root;
+        const int ms = fade ? WallpaperFade::duration() : 0;
+        const bool fading = ms > 0 && m_fade->cover([this, image, ms]() {
+            const bool ok = setRootPixmap(image);
+            m_fade->reveal(ok ? image : QImage(), ms);
+        });
+        if (!fading && !setRootPixmap(image))
+            qWarning("fanshell-qs: cannot set the root window's background");
+    });
+    thread->start();
 }
 
 void WallpaperPicker::apply(int index)
 {
     if (index < 0 || index >= entries.size())
         return;
-    const QString path = entries[index].path;
-    const QString feMode = mode();
-    const int ms = WallpaperFade::duration();
-    const bool fading = ms > 0 && m_fade->cover([this, path, feMode, ms]() {
-        runFeh(path, feMode, true, [this, ms](bool ok) { m_fade->reveal(ok, ms); });
-    });
-    if (!fading)
-        runFeh(path, feMode, true);
+    Wallpapers::Config conf = m_conf;
+    const Wallpapers::Choice choice{entries[index].path, mode()};
+    if (target.isEmpty()) {
+        conf.all = choice;
+        conf.outputs.clear();
+    } else {
+        conf.outputs[target] = choice;
+    }
+    draw(conf, true, true);
 }
 
 void WallpaperPicker::restore()
 {
-    const QHash<QString, QString> conf =
-        Paths::readConf(QLatin1String(stateName));
-    const QString path = conf.value(QStringLiteral("path"), current);
-    if (path.isEmpty() || !QFileInfo::exists(path))
-        return;
-    /* The mode it was set with, so a later wallpaper.mode change does not
-     * silently re-crop what is already chosen. */
-    QString feMode = conf.value(QStringLiteral("mode"));
-    if (feMode.isEmpty())
-        feMode = mode();
-    runFeh(path, feMode, false);
+    /* Each with the mode it was set with, so a later wallpaper.mode change
+     * does not silently re-crop what is already chosen. */
+    draw(m_conf, false, false);
 }
 
 void WallpaperPicker::syncSelectionToCurrent()
 {
     for (int i = 0; i < entries.size(); i++)
-        if (entries[i].path == current) {
+        if (isCurrent(entries[i].path)) {
             selected = i;
             return;
         }
@@ -495,9 +728,11 @@ void WallpaperPicker::move(int delta)
 void WallpaperPicker::openPicker()
 {
     /* Pick up anything added to the directory since the last open, and
-     * re-read what wallpaper.conf says is showing. */
+     * re-read wallpaper.conf. */
     rescan();
-    refreshCurrent();
+    m_conf = Wallpapers::Config::load();
+    if (!target.isEmpty() && !outputNames().contains(target))
+        target.clear();
     syncSelectionToCurrent();
     /* openOn() resolves the focused output itself. */
     m_win->openOn(nullptr);
@@ -582,7 +817,7 @@ void WallpaperGrid::paintEvent(QPaintEvent *)
 
         const Wallpaper &w = m_p->entries[i];
         const bool sel = (i == m_p->selected);
-        const bool active = (w.path == m_p->current);
+        const bool active = m_p->isCurrent(w.path);
 
         if (sel)
             Theme::paintRect(p, cell.adjusted(2, 2, -2, -2), Theme::surface,
@@ -659,12 +894,16 @@ void WallpaperGrid::resizeEvent(QResizeEvent *)
 
 namespace {
 
+/* The "Apply to" row above the grid. */
+constexpr int headerH = Theme::buttonHeight + Theme::popupSpacing;
+constexpr int targetW = 240;
+
 QRect boxRectFor(const QSize &winSize, int gridContentH)
 {
     const int w = WallpaperPicker::columns * WallpaperPicker::cellW()
                   + 2 * Theme::popupMargin;
     const int maxH = qRound(winSize.height() * 0.72);
-    const int h = qMin(maxH, 2 * Theme::popupMargin + gridContentH);
+    const int h = qMin(maxH, 2 * Theme::popupMargin + headerH + gridContentH);
     const int x = (winSize.width() - w) / 2;
     const int y = (winSize.height() - h) / 2;
     return QRect(x, y, w, h);
@@ -678,10 +917,31 @@ WallpaperWindow::WallpaperWindow(WallpaperPicker *p)
     setWindowTitle(QStringLiteral("fanshell-wallpaper"));
     setAttribute(Qt::WA_TranslucentBackground);
     m_grid = new WallpaperGrid(p, this);
+    m_targetLabel = new TextItem(this);
+    m_targetLabel->setPixelSize(Theme::smallFontSize);
+    m_targetLabel->setColor(Theme::textMuted);
+    m_targetLabel->setText(QStringLiteral("Apply to"));
+    m_list = new ChoiceList(this);
+    m_target = new Selector(m_list, this);
+    m_target->chosen = [this](int i) {
+        const QStringList names = WallpaperPicker::outputNames();
+        m_p->target = i > 0 ? names.value(i - 1) : QString();
+        m_p->syncSelectionToCurrent();
+        syncTarget();
+        m_grid->ensureVisible();
+        m_grid->update();
+    };
     connect(p, &WallpaperPicker::changed, this, [this]() {
         if (isVisible())
             layoutBox();
     });
+}
+
+void WallpaperWindow::syncTarget()
+{
+    const QStringList names = WallpaperPicker::outputNames();
+    m_target->setChoices(QStringList{QStringLiteral("All displays")} + names,
+                         m_p->target.isEmpty() ? 0 : int(names.indexOf(m_p->target)) + 1);
 }
 
 void WallpaperWindow::openOn(QScreen *screen)
@@ -719,6 +979,8 @@ void WallpaperWindow::openOn(QScreen *screen)
         m_screen = screen;
         m_configured = true;
     }
+    m_list->hide();
+    syncTarget();
     show();
     layoutBox();
     m_grid->ensureVisible();
@@ -728,9 +990,15 @@ void WallpaperWindow::openOn(QScreen *screen)
 void WallpaperWindow::layoutBox()
 {
     const QRect box = boxRectFor(size(), m_grid->contentHeight());
-    m_grid->setGeometry(box.adjusted(Theme::popupMargin, Theme::popupMargin,
-                                     -Theme::popupMargin,
-                                     -Theme::popupMargin));
+    const QRect inner = box.adjusted(Theme::popupMargin, Theme::popupMargin,
+                                     -Theme::popupMargin, -Theme::popupMargin);
+    const int labelW = m_targetLabel->sizeHint().width();
+    m_targetLabel->setGeometry(inner.x(), inner.y(), labelW, Theme::buttonHeight);
+    m_target->setGeometry(inner.x() + labelW + Theme::sectionSpacing, inner.y(),
+                          targetW, Theme::buttonHeight);
+    m_grid->setGeometry(inner.adjusted(0, headerH, 0, 0));
+    /* The open list draws over the whole window, grid included. */
+    m_list->raise();
     update();
 }
 
@@ -765,7 +1033,10 @@ void WallpaperWindow::keyPressEvent(QKeyEvent *e)
 {
     switch (e->key()) {
     case Qt::Key_Escape:
-        m_p->hidePicker();
+        if (m_list->isVisible())
+            m_list->hide();
+        else
+            m_p->hidePicker();
         return;
     case Qt::Key_Left:
         m_p->move(-1);
