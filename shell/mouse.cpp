@@ -637,7 +637,13 @@ QVector<MouseSettings::Device> MouseSettings::devices() const
         } else {
             same->ids << info->deviceid;
         }
-        same->touchpad = same->touchpad || deviceHas(info->deviceid, tapping);
+        /* A touchpad can come with siblings of the same name (its pen or
+         * its buttons) that lack the touchpad's settings: the popup reads
+         * the first id, so the touchpad goes first. */
+        if (!same->touchpad && deviceHas(info->deviceid, tapping)) {
+            same->touchpad = true;
+            same->ids.move(same->ids.size() - 1, 0);
+        }
     }
     free(r);
     std::sort(out.begin(), out.end(), [](const Device &a, const Device &b) {
