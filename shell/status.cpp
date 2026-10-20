@@ -1,11 +1,9 @@
 #include "status.h"
 
 #include <QFile>
-#include <QProcess>
 #include <QStorageInfo>
 
 #include <algorithm>
-#include <csignal>
 
 #include "gamemode.h"
 #include "idleinhibit.h"
@@ -19,78 +17,6 @@ QString glyph(char32_t c)
 }
 
 } /* namespace */
-
-/* ------------------------------------------------------------ UpdatesState */
-
-UpdatesState *UpdatesState::instance()
-{
-    static UpdatesState *s = new UpdatesState();
-    return s;
-}
-
-UpdatesState::UpdatesState(QObject *parent) : QObject(parent)
-{
-    m_proc.setCommand({QStringLiteral("fanshell-qs-updates")});
-    connect(&m_proc, &CollectorProcess::finished, this, &UpdatesState::parse);
-    connect(&m_timer, &QTimer::timeout, this, [this]() {
-        check();
-        bool ok = false;
-        const double hours =
-            Paths::setting(QStringLiteral("updates.interval")).toDouble(&ok);
-        m_timer.start(int(qBound(0.25, ok ? hours : 6.0, 168.0) * 3600 * 1000));
-    });
-    /* Not at login, when the session is busiest. */
-    m_timer.setSingleShot(true);
-    m_timer.start(60 * 1000);
-}
-
-bool UpdatesState::enabled() const
-{
-    return Paths::setting(QStringLiteral("updates")).toLower() != QLatin1String("off");
-}
-
-void UpdatesState::check()
-{
-    if (enabled())
-        m_proc.start();
-}
-
-void UpdatesState::parse(const QString &text)
-{
-    int count = -1;
-    for (const QString &line : text.split(QLatin1Char('\n')))
-        if (line.startsWith(QLatin1String("count=")))
-            count = line.mid(6).toInt();
-    if (count == m_count)
-        return;
-    m_count = count;
-    emit changed();
-}
-
-void UpdatesState::upgrade()
-{
-    if (m_upgrade)
-        return;
-    m_upgrade = new QProcess(this);
-    m_upgrade->setProgram(QStringLiteral("fanshell-qs-menu-action"));
-    m_upgrade->setArguments({QStringLiteral("execute:update")});
-    m_upgrade->setChildProcessModifier([]() {
-        signal(SIGCHLD, SIG_DFL);
-        signal(SIGINT, SIG_DFL);
-        signal(SIGQUIT, SIG_DFL);
-    });
-    auto done = [this]() {
-        m_upgrade->deleteLater();
-        m_upgrade = nullptr;
-        check();
-    };
-    connect(m_upgrade, &QProcess::finished, this, done);
-    connect(m_upgrade, &QProcess::errorOccurred, this, [done](QProcess::ProcessError e) {
-        if (e == QProcess::FailedToStart)
-            done();
-    });
-    m_upgrade->start();
-}
 
 /* --------------------------------------------------------------- DiskState */
 
@@ -218,31 +144,6 @@ void NetSpeed::sample()
     m_rx = rx;
     m_tx = tx;
     m_primed = true;
-}
-
-/* ----------------------------------------------------------- UpdatesWidget */
-
-UpdatesWidget::UpdatesWidget(QWidget *parent) : BarPill(parent)
-{
-    setIcon(glyph(U'\U000F03D5')); /* mdi package-up */
-    setTint(Theme::accent);
-    hide();
-    UpdatesState *u = UpdatesState::instance();
-    connect(this, &BarPill::clicked, u, &UpdatesState::upgrade);
-    connect(this, &BarPill::rightClicked, u, &UpdatesState::check);
-    connect(u, &UpdatesState::changed, this, &UpdatesWidget::sync);
-    sync();
-}
-
-void UpdatesWidget::sync()
-{
-    const int n = UpdatesState::instance()->count();
-    setLabel(QString::number(n));
-    setToolTip(QStringLiteral("%1 update%2 waiting. Click to upgrade; right-click "
-                              "to check again")
-                   .arg(n)
-                   .arg(n == 1 ? "" : "s"));
-    setVisible(n > 0 && UpdatesState::instance()->enabled());
 }
 
 /* -------------------------------------------------------------- DiskWidget */

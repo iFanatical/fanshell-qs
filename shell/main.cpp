@@ -314,10 +314,6 @@ int main(int argc, char *argv[])
                 []() { GameMode::instance()->setActive(true); });
     ipc->handle(QStringLiteral("gamemode"), QStringLiteral("off"),
                 []() { GameMode::instance()->setActive(false); });
-    ipc->handle(QStringLiteral("updates"), QStringLiteral("check"),
-                []() { UpdatesState::instance()->check(); });
-    ipc->handle(QStringLiteral("updates"), QStringLiteral("upgrade"),
-                []() { UpdatesState::instance()->upgrade(); });
     ipc->handle(QStringLiteral("picker"), QStringLiteral("pick"),
                 []() { Capture::instance()->pickColor(); });
     ipc->handle(QStringLiteral("screenshot"), QStringLiteral("region"),

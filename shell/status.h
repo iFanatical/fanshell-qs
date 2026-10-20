@@ -1,12 +1,6 @@
-/* Status the bar shows only when it has something to say: pending package
- * updates, a filling disk, keep awake / game mode being on, and network
- * throughput.
+/* Status the bar shows only when it has something to say: a filling disk,
+ * keep awake / game mode being on, and network throughput.
  *
- *   Updates   scripts/fanshell-qs-updates counts them (dnf on Fedora, emerge
- *             on Gentoo) a minute after startup and every updates.interval
- *             hours (default 6); the pill shows while there are any. Click
- *             to upgrade in a terminal (the menu's update action), then it
- *             counts again; right-click counts now. updates=off hides it.
  *   Disk      / and /home (when separate), every five minutes; the pill
  *             shows while one is disk.warn percent full or more (default
  *             90). The System dropdown shows the fuller one either way.
@@ -25,33 +19,6 @@
 
 #include "procutil.h"
 #include "widgets.h"
-
-class QProcess;
-
-class UpdatesState : public QObject {
-    Q_OBJECT
-public:
-    static UpdatesState *instance();
-
-    /* Pending updates; -1 until counted, or when it cannot tell. */
-    int count() const { return m_count; }
-    bool enabled() const;
-    void check();
-    /* Run the upgrade in a terminal, and count again once it closes. */
-    void upgrade();
-
-signals:
-    void changed();
-
-private:
-    explicit UpdatesState(QObject *parent = nullptr);
-    void parse(const QString &text);
-
-    int m_count = -1;
-    CollectorProcess m_proc;
-    QTimer m_timer;
-    QProcess *m_upgrade = nullptr;
-};
 
 class DiskState : public QObject {
     Q_OBJECT
@@ -104,15 +71,6 @@ private:
     quint64 m_rx = 0, m_tx = 0;
     bool m_primed = false;
     double m_down = 0, m_up = 0;
-};
-
-class UpdatesWidget : public BarPill {
-    Q_OBJECT
-public:
-    explicit UpdatesWidget(QWidget *parent = nullptr);
-
-private:
-    void sync();
 };
 
 class DiskWidget : public BarPill {

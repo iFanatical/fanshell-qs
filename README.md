@@ -557,12 +557,6 @@ wins over the defaults file.
 
 These show on the bar only while they have something to say:
 
-- **Updates**: the number of package updates waiting, counted by
-  `fanshell-qs-updates` (`dnf check-update` on Fedora, `emerge -puDN @world`
-  on Gentoo, both at idle priority) a minute after startup and every
-  `updates.interval` hours. Click to upgrade in a terminal (the menu's update
-  action); it counts again when the terminal closes. Right-click (or
-  `ipc call updates check`) counts now.
 - **Disk**: `/` or `/home` at `disk.warn` percent full or more. The System
   dropdown's Disk tile shows the fuller of the two either way.
 - **Keep awake / game mode**: a coffee cup and a gamepad while either is on;
@@ -665,8 +659,6 @@ ups.community=public
 | `network.bridge` | path to `net-bridge.sh` for the non-NetworkManager backend (default `/usr/local/bin/net-bridge.sh`) |
 | `power.window` | RAPL sample window in seconds (default `0.5`) |
 | `power.powercap_dir` | powercap root (default `/sys/class/powercap`) |
-| `updates` | `off` hides the updates pill and stops counting; default `on` |
-| `updates.interval` | hours between counts (default `6`) |
 | `disk.warn` | percent full at which the disk pill shows (default `90`) |
 | `network.speed` | `off` leaves the rates out of the network pill; default `on` |
 | `gamemode.auto` | `fullscreen` turns game mode on while the focused window is fullscreen; default off |

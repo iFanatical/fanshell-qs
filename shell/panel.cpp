@@ -134,7 +134,6 @@ Panel::Panel(WmState *state, QScreen *screen)
     rightRow->addWidget(new NotificationWidget(m_rightBox), 0, Qt::AlignVCenter);
     /* Each of these shows only while it has something to say. */
     rightRow->addWidget(new ModesWidget(m_rightBox), 0, Qt::AlignVCenter);
-    rightRow->addWidget(new UpdatesWidget(m_rightBox), 0, Qt::AlignVCenter);
     rightRow->addWidget(new DiskWidget(m_rightBox), 0, Qt::AlignVCenter);
     rightRow->addWidget(new LayoutWidget(screen, m_rightBox), 0, Qt::AlignVCenter);
     rightRow->addWidget(new NetworkWidget(m_rightBox), 0, Qt::AlignVCenter);
