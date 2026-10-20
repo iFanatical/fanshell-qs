@@ -1,0 +1,38 @@
+#!/bin/sh
+# fanshell-qs-updates — how many package updates are waiting, for the bar.
+#
+# Prints count=N, or nothing when it cannot tell. Runs at idle priority:
+#   Fedora  dnf check-update, which refreshes the metadata when it has
+#           expired (the user's own cache; no root needed).
+#   Gentoo  emerge -puDN @world against the tree as last synced -- what
+#           `emerge -auDN @world` would merge, new dependencies and
+#           rebuilds included. Half a minute or so.
+set -u
+
+idle() {
+	if command -v ionice >/dev/null 2>&1; then
+		nice -n 19 ionice -c 3 "$@"
+	else
+		nice -n 19 "$@"
+	fi
+}
+
+if command -v dnf >/dev/null 2>&1; then
+	out=$(idle dnf -q check-update 2>/dev/null)
+	status=$?
+	# 100: updates listed; 0: none; anything else: it failed.
+	case $status in
+	0) echo count=0 ;;
+	100)
+		# One "name.arch version repo" line per package, before any
+		# "Obsoleting packages" section.
+		printf '%s\n' "$out" | awk '
+			/^Obsoleting/ { exit }
+			NF == 3 && $1 ~ /\./ { n++ }
+			END { print "count=" n + 0 }'
+		;;
+	esac
+elif command -v emerge >/dev/null 2>&1; then
+	out=$(idle emerge -puDNq --with-bdeps=y @world 2>/dev/null) || exit 0
+	printf '%s\n' "$out" | awk '/^\[ebuild/ { n++ } END { print "count=" n + 0 }'
+fi

@@ -36,14 +36,15 @@ MODULES  = widgets popup surface procutil wmstate oxwmipc oxwmstate qtileipc \
            panel network bluetooth volume tray traymenu desktopentry \
            launcher ipc clipboard system battery wallpaper notification osd \
            hardwarecontrols powerprofiles media menu xembedtray vibrance displays \
-           controlpanel keyboard mouse idleinhibit lockscreen nightlight
+           controlpanel keyboard mouse idleinhibit lockscreen nightlight \
+           gamemode status capture
 # headers containing Q_OBJECT classes
 MOCHDRS  = widgets popup procutil wmstate oxwmipc oxwmstate qtilestate calendar \
            pills panel \
            network bluetooth volume tray traymenu desktopentry launcher ipc \
            clipboard system battery wallpaper notification osd \
            hardwarecontrols powerprofiles media xembedtray vibrance displays \
-           idleinhibit nightlight
+           idleinhibit nightlight gamemode status capture
 
 OBJ      = $(MODULES:%=%.o) main.o $(MOCHDRS:%=moc_%.o)
 

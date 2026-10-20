@@ -11,6 +11,9 @@
  *  - the X screen saver and DPMS are suspended (XScreenSaverSuspend), so
  *    Screen power does not blank the screen either.
  *
+ * Keep awake (System dropdown, `ipc call keepawake toggle`) and game mode
+ * are requests of the shell's own, held until turned off and not saved.
+ *
  * Served at /org/freedesktop/ScreenSaver and /ScreenSaver, where different
  * programs look. If another process already owns the name, it is left to
  * it. */
@@ -33,6 +36,17 @@ public:
     bool inhibited() const { return !m_inhibitors.isEmpty(); }
     /* "Brave: Playing video", one per request held. */
     QStringList reasons() const;
+
+    /* The shell's own requests; programs' cookies start at 1. */
+    static constexpr uint keepAwakeCookie = 0;
+    static constexpr uint gameModeCookie = 0xffffffffu;
+    bool holds(uint cookie) const { return m_inhibitors.contains(cookie); }
+    void setShellRequest(uint cookie, const QString &name, bool on);
+    bool keepAwake() const { return holds(keepAwakeCookie); }
+    void setKeepAwake(bool on)
+    {
+        setShellRequest(keepAwakeCookie, QStringLiteral("Keep awake"), on);
+    }
 
 public slots:
     Q_SCRIPTABLE uint Inhibit(const QString &application, const QString &reason);

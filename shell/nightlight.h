@@ -69,6 +69,11 @@ public:
     /* Write the ramps again, after a modeset may have reset them. */
     void refresh();
 
+    /* Held (game mode): the ramps are left as they are, so no write can
+     * stall a frame; on release it fades to where the sun says. */
+    void setHeld(bool held);
+    bool held() const { return m_held; }
+
     void openWindow();
     void toggleWindow();
     void hideWindow();
@@ -90,6 +95,7 @@ private:
      * left alone for anything else to set. Unknown at first: a shell that
      * crashed at night may have left them warm. */
     int m_written = -1;
+    bool m_held = false;
     QTimer m_tick;
     QTimer m_fade;
     QTimer m_hotplug;

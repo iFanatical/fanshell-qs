@@ -26,9 +26,9 @@ super + p
 super + shift + p
 	fanshell-qs-restart
 
-# color picker (hyprpicker)
+# color picker: click a pixel, its #rrggbb goes to the clipboard
 alt + c
-	$SCRIPTS/xcolorpick.sh
+	fanshell-qs-shell ipc call picker pick
 
 # shell
 super + alt + space
@@ -61,18 +61,22 @@ alt + shift + v
 super + alt + v
 	fanshell-qs-shell ipc call vpn refresh
 
-# screenshots (hyprshot)
+# screenshots: drag a region (a click takes the output), or the output under
+# the pointer; saved to ~/Pictures/screenshots and copied to the clipboard
 Print
-	$SCRIPTS/screenshot.sh
+	fanshell-qs-shell ipc call screenshot region
 
 shift + Print
-	$SCRIPTS/screenshot.sh output
+	fanshell-qs-shell ipc call screenshot output
+
+ctrl + Print
+	fanshell-qs-shell ipc call screenshot screen
 
 ctrl + alt + Tab
-	$SCRIPTS/screenshot.sh
+	fanshell-qs-shell ipc call screenshot region
 
 ctrl + shift + alt + Tab
-	$SCRIPTS/screenshot.sh output
+	fanshell-qs-shell ipc call screenshot output
 
 # media keys
 XF86AudioPlay

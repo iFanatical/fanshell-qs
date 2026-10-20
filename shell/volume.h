@@ -22,6 +22,17 @@ public:
         QString description;
         bool isDefault = false;
     };
+    /* One program's output stream (a sink input). */
+    struct Stream {
+        uint32_t index = 0;
+        QString name;
+        QString iconName; /* application.icon_name, often empty */
+        QString binary;   /* application.process.binary */
+        qreal volume = 0; /* 0..1 */
+        bool muted = false;
+        bool playing = false; /* not paused (corked) */
+        uint8_t channels = 2;
+    };
 
     static PulseBackend *instance();
 
@@ -39,6 +50,9 @@ public:
     QStringList playing;
     /* The server has answered with its streams at least once. */
     bool playingKnown = false;
+    /* Programs' output streams, paused ones too, with the same filter as
+     * `playing`; by index. Changes emit streamsChanged(). */
+    QVector<Stream> streams;
 
     void setSinkVolume(qreal v);
     void setSinkMuted(bool m);
@@ -47,10 +61,13 @@ public:
     void setSourceMuted(bool m);
     void toggleSourceMuted() { setSourceMuted(!sourceMuted); }
     void setDefaultSink(const QString &name);
+    void setStreamVolume(uint32_t index, qreal v);
+    void setStreamMuted(uint32_t index, bool m);
 
 signals:
     void changed();
     void playingChanged();
+    void streamsChanged();
 
 private:
     explicit PulseBackend(QObject *parent = nullptr);

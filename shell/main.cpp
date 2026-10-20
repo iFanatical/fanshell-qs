@@ -13,8 +13,10 @@
 #include <QScreen>
 
 #include "wmstate.h"
+#include "capture.h"
 #include "controlpanel.h"
 #include "displays.h"
+#include "gamemode.h"
 #include "hardwarecontrols.h"
 #include "idleinhibit.h"
 #include "ipc.h"
@@ -28,6 +30,7 @@
 #include "osd.h"
 #include "panel.h"
 #include "popup.h"
+#include "status.h"
 #include "vibrance.h"
 #include "wallpaper.h"
 #include "pills.h"
@@ -297,6 +300,32 @@ int main(int argc, char *argv[])
                 []() { WallpaperPicker::instance()->openPicker(); });
     ipc->handle(QStringLiteral("wallpaper"), QStringLiteral("hide"),
                 []() { WallpaperPicker::instance()->hidePicker(); });
+    ipc->handle(QStringLiteral("keepawake"), QStringLiteral("toggle"), []() {
+        IdleInhibitor *i = IdleInhibitor::instance();
+        i->setKeepAwake(!i->keepAwake());
+    });
+    ipc->handle(QStringLiteral("keepawake"), QStringLiteral("on"),
+                []() { IdleInhibitor::instance()->setKeepAwake(true); });
+    ipc->handle(QStringLiteral("keepawake"), QStringLiteral("off"),
+                []() { IdleInhibitor::instance()->setKeepAwake(false); });
+    ipc->handle(QStringLiteral("gamemode"), QStringLiteral("toggle"),
+                []() { GameMode::instance()->toggle(); });
+    ipc->handle(QStringLiteral("gamemode"), QStringLiteral("on"),
+                []() { GameMode::instance()->setActive(true); });
+    ipc->handle(QStringLiteral("gamemode"), QStringLiteral("off"),
+                []() { GameMode::instance()->setActive(false); });
+    ipc->handle(QStringLiteral("updates"), QStringLiteral("check"),
+                []() { UpdatesState::instance()->check(); });
+    ipc->handle(QStringLiteral("updates"), QStringLiteral("upgrade"),
+                []() { UpdatesState::instance()->upgrade(); });
+    ipc->handle(QStringLiteral("picker"), QStringLiteral("pick"),
+                []() { Capture::instance()->pickColor(); });
+    ipc->handle(QStringLiteral("screenshot"), QStringLiteral("region"),
+                []() { Capture::instance()->screenshot(Capture::Kind::Region); });
+    ipc->handle(QStringLiteral("screenshot"), QStringLiteral("output"),
+                []() { Capture::instance()->screenshot(Capture::Kind::Output); });
+    ipc->handle(QStringLiteral("screenshot"), QStringLiteral("screen"),
+                []() { Capture::instance()->screenshot(Capture::Kind::Screen); });
     if (!ipc->listen())
         fprintf(stderr,
                 "fanshell-qs-shell: cannot listen on %s -- another instance "

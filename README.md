@@ -351,9 +351,10 @@ scratchpad window ids, the `maximize` layout memo) stays in
 
 ### Control Panel
 
-The System dropdown is for status and quick actions: CPU, memory and
-temperature, weather, Bluetooth, clipboard, VPN, the power profile, the
-keyboard backlight (on a laptop that has one), audio,
+The System dropdown is for status and quick actions: CPU, memory,
+temperature and disk, weather, Bluetooth, clipboard, VPN, Keep awake and
+Game mode, the power profile, the keyboard backlight (on a laptop that has
+one), audio (output, input, each program's volume, the output device),
 and one row of icons for Lock, Sleep, Log out, Reboot and Power off (named
 in the caption below the row as you point at them; the last three ask for a
 second click). Settings live in the **Control Panel**, opened from the
@@ -552,6 +553,58 @@ again: the popup saves them to `mouse.conf` by exact name, and
 any part of a name, ignoring case (`speed:g pro=-0.5`). The popup's choice
 wins over the defaults file.
 
+### Status pills
+
+These show on the bar only while they have something to say:
+
+- **Updates**: the number of package updates waiting, counted by
+  `fanshell-qs-updates` (`dnf check-update` on Fedora, `emerge -puDN @world`
+  on Gentoo, both at idle priority) a minute after startup and every
+  `updates.interval` hours. Click to upgrade in a terminal (the menu's update
+  action); it counts again when the terminal closes. Right-click (or
+  `ipc call updates check`) counts now.
+- **Disk**: `/` or `/home` at `disk.warn` percent full or more. The System
+  dropdown's Disk tile shows the fuller of the two either way.
+- **Keep awake / game mode**: a coffee cup and a gamepad while either is on;
+  click turns them off.
+- **Network speed**: download and upload rates in the network pill, over the
+  physical interfaces (VPN tunnels and bridges are left out, since their
+  traffic is counted again on the link). `network.speed=off` hides them.
+
+### Keep awake and game mode
+
+**Keep awake** (System dropdown, or `ipc call keepawake toggle|on|off`)
+stops the screen blanking and locking until it is turned off, as a program
+playing video can ask to. It is not remembered across restarts.
+
+**Game mode** (System dropdown, or `ipc call gamemode toggle|on|off`) turns
+on do not disturb, switches the power profile to Performance where there is
+one, holds the night light (each gamma write stalls the X server for a few
+frames) and keeps the screen from blanking or locking, since a controller
+is not X input. Turning it off puts back the do-not-disturb setting and
+power profile it found, and the night light catches up. With
+`gamemode.auto=fullscreen` it turns itself on while the focused window is
+fullscreen and off afterwards; turned off by hand meanwhile, it stays off
+until that window stops being fullscreen.
+
+### Colour picker and screenshots
+
+Both work on a frozen copy of the screen as picom shows it, taken at the key
+press, so nothing extra (maim, xclip, a picker) is needed.
+
+- `ipc call picker pick` (Alt+C): a loupe follows the pointer; a click copies
+  the pixel's colour as `#rrggbb` to the clipboard. Escape or right-click
+  cancels.
+- `ipc call screenshot region` (Print): drag a rectangle, across outputs if
+  need be; a click without dragging takes the whole output. Escape or
+  right-click cancels.
+- `ipc call screenshot output` (Shift+Print): the output under the pointer.
+- `ipc call screenshot screen` (Ctrl+Print): every output.
+
+Screenshots are saved as PNGs in `screenshot.dir` (default
+`~/Pictures/screenshots`), copied to the clipboard, and announced with a
+thumbnail.
+
 ## Bringing over fanhypr-qs changes
 
 The shell is a port, not a fork with shared history. Most files differ from
@@ -612,6 +665,12 @@ ups.community=public
 | `network.bridge` | path to `net-bridge.sh` for the non-NetworkManager backend (default `/usr/local/bin/net-bridge.sh`) |
 | `power.window` | RAPL sample window in seconds (default `0.5`) |
 | `power.powercap_dir` | powercap root (default `/sys/class/powercap`) |
+| `updates` | `off` hides the updates pill and stops counting; default `on` |
+| `updates.interval` | hours between counts (default `6`) |
+| `disk.warn` | percent full at which the disk pill shows (default `90`) |
+| `network.speed` | `off` leaves the rates out of the network pill; default `on` |
+| `gamemode.auto` | `fullscreen` turns game mode on while the focused window is fullscreen; default off |
+| `screenshot.dir` | where screenshots are saved (default `~/Pictures/screenshots`) |
 | `menu.source_dir` | this checkout, for the menu's entries that open its files (default `~/projects/window-managers/fanshell-qs`) |
 
 The other files in `~/.config/fanshell-qs` (`wallpaper.conf`,

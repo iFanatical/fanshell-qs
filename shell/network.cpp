@@ -9,6 +9,8 @@
 
 #include <functional>
 
+#include "status.h"
+
 static QString glyph(char32_t c)
 {
     return QString::fromUcs4(&c, 1);
@@ -218,6 +220,7 @@ NetworkWidget::NetworkWidget(QWidget *parent) : BarPill(parent)
     });
     connect(NetworkState::instance(), &NetworkState::changed, this,
             &NetworkWidget::sync);
+    connect(NetSpeed::instance(), &NetSpeed::changed, this, &NetworkWidget::sync);
     sync();
 }
 
@@ -239,6 +242,13 @@ void NetworkWidget::sync()
     }
     setIcon(icon);
     setTint(Theme::text);
+    /* Padded so the pill keeps its width as the rates change. */
+    NetSpeed *speed = NetSpeed::instance();
+    setLabel(NetSpeed::enabled() && n->online()
+                 ? QStringLiteral("↓ %1  ↑ %2")
+                       .arg(NetSpeed::rate(speed->down()).rightJustified(4),
+                            NetSpeed::rate(speed->up()).rightJustified(4))
+                 : QString());
 }
 
 /* ------------------------------------------------------------ list rows -- */

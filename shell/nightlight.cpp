@@ -351,6 +351,7 @@ NightLight::NightLight(QObject *parent) : QObject(parent)
     /* Normal colours again for whatever runs after the shell. */
     connect(qApp, &QCoreApplication::aboutToQuit, this, [this]() {
         m_fade.stop();
+        m_held = false;
         apply(neutral);
     });
 
@@ -452,9 +453,24 @@ void NightLight::save()
                  qPrintable(Paths::configFile(QLatin1String(confName))));
 }
 
+void NightLight::setHeld(bool held)
+{
+    if (held == m_held)
+        return;
+    m_held = held;
+    if (held)
+        m_fade.stop();
+    else
+        retarget(true);
+    emit changed();
+}
+
 /* Head for the temperature the sun says, fading there if it is a jump. */
 void NightLight::retarget(bool fade)
 {
+    /* m_current stays what is on screen, for the fade on release. */
+    if (m_held)
+        return;
     const int goal = target();
     if (fade && std::fabs(goal - m_current) > 50) {
         m_fadeFrom = m_current;
@@ -478,7 +494,7 @@ void NightLight::retarget(bool fade)
 void NightLight::refresh()
 {
     /* Off: the ramps are normal or someone else's. */
-    if (!m_settings.enabled && !m_fade.isActive())
+    if (m_held || (!m_settings.enabled && !m_fade.isActive()))
         return;
     /* Forget what was written: the modeset may have put normal ramps back,
      * or left ours. */

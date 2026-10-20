@@ -101,6 +101,17 @@ void IdleInhibitor::SimulateUserActivity()
     }
 }
 
+void IdleInhibitor::setShellRequest(uint cookie, const QString &name, bool on)
+{
+    if (on == holds(cookie))
+        return;
+    if (on)
+        m_inhibitors.insert(cookie, {QString(), name, QString()});
+    else
+        m_inhibitors.remove(cookie);
+    update();
+}
+
 QStringList IdleInhibitor::reasons() const
 {
     QStringList out;

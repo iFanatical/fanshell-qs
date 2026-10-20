@@ -11,6 +11,7 @@
 #include "network.h"
 #include "notification.h"
 #include "pills.h"
+#include "status.h"
 #include "system.h"
 #include "tray.h"
 #include "surface.h"
@@ -131,6 +132,10 @@ Panel::Panel(WmState *state, QScreen *screen)
     rightRow->setContentsMargins(0, 0, 0, 0);
     rightRow->setSpacing(Theme::rowSpacing);
     rightRow->addWidget(new NotificationWidget(m_rightBox), 0, Qt::AlignVCenter);
+    /* Each of these shows only while it has something to say. */
+    rightRow->addWidget(new ModesWidget(m_rightBox), 0, Qt::AlignVCenter);
+    rightRow->addWidget(new UpdatesWidget(m_rightBox), 0, Qt::AlignVCenter);
+    rightRow->addWidget(new DiskWidget(m_rightBox), 0, Qt::AlignVCenter);
     rightRow->addWidget(new LayoutWidget(screen, m_rightBox), 0, Qt::AlignVCenter);
     rightRow->addWidget(new NetworkWidget(m_rightBox), 0, Qt::AlignVCenter);
     /* Battery groups with the other status pills rather than sitting past the

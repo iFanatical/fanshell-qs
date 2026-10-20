@@ -1,7 +1,9 @@
 #include "system.h"
 
 #include <QEnterEvent>
+#include <QFileInfo>
 #include <QHBoxLayout>
+#include <QIcon>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QProcess>
@@ -13,10 +15,14 @@
 #include "bluetooth.h"
 #include "clipboard.h"
 #include "controlpanel.h"
+#include "desktopentry.h"
+#include "gamemode.h"
 #include "hardwarecontrols.h"
+#include "idleinhibit.h"
 #include "pills.h"
 #include "powerprofiles.h"
 #include "procutil.h"
+#include "status.h"
 #include "volume.h"
 
 static QString glyph(char32_t c)
@@ -223,6 +229,129 @@ private:
     bool m_pressed = false;
 };
 
+/* A program's icon: the one its stream names, else that of the desktop
+ * entry whose id or command is the program, else a generic one. */
+QIcon programIcon(const PulseBackend::Stream &s)
+{
+    if (!s.iconName.isEmpty() && QIcon::hasThemeIcon(s.iconName))
+        return QIcon::fromTheme(s.iconName);
+    const QStringList wanted{s.binary.toLower(), s.name.toLower()};
+    for (const DesktopEntry &e : DesktopEntries::instance()->applications()) {
+        if (e.icon.isEmpty())
+            continue;
+        const QString id = e.id.toLower();
+        const QString command =
+            e.exec.section(QLatin1Char(' '), 0, 0).section(QLatin1Char('/'), -1).toLower();
+        for (const QString &w : wanted)
+            if (!w.isEmpty()
+                    && (id == w || id.endsWith(QLatin1Char('.') + w) || command == w
+                        || e.name.toLower() == w))
+                return QFileInfo::exists(e.icon) ? QIcon(e.icon)
+                                                 : QIcon::fromTheme(e.icon);
+    }
+    return QIcon::fromTheme(QStringLiteral("application-x-executable"));
+}
+
+/* The icon column of an app's row: same width as the Output and Input
+ * icons, so the sliders line up. Click to mute; muted, it is greyed. */
+class StreamIcon : public QWidget {
+public:
+    explicit StreamIcon(QWidget *parent) : QWidget(parent)
+    {
+        setFixedSize(20, 20);
+        setCursor(Qt::PointingHandCursor);
+    }
+
+    std::function<void()> clicked;
+
+    void set(const QIcon &icon, const QString &name, bool muted)
+    {
+        m_icon = icon;
+        m_name = name;
+        m_muted = muted;
+        setToolTip(QStringLiteral("%1. Click to %2")
+                       .arg(name, muted ? QStringLiteral("unmute") : QStringLiteral("mute")));
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::Antialiasing);
+        const QRect r = rect().adjusted(1, 1, -1, -1);
+        if (!m_icon.isNull()) {
+            m_icon.paint(&p, r, Qt::AlignCenter, m_muted ? QIcon::Disabled : QIcon::Normal);
+        } else {
+            p.setFont(Theme::font(Theme::smallFontSize, true));
+            p.setPen(m_muted ? Theme::textMuted : Theme::text);
+            p.drawText(rect(), Qt::AlignCenter, m_name.left(1).toUpper());
+        }
+        if (m_muted) {
+            p.setPen(QPen(Theme::danger, 2));
+            p.drawLine(r.bottomLeft(), r.topRight());
+        }
+    }
+    void mouseReleaseEvent(QMouseEvent *e) override
+    {
+        if (e->button() == Qt::LeftButton && rect().contains(e->pos()) && clicked)
+            clicked();
+    }
+
+private:
+    QIcon m_icon;
+    QString m_name;
+    bool m_muted = false;
+};
+
+/* One program's volume: its icon (click to mute), a slider and the level. */
+class StreamRow : public QWidget {
+public:
+    StreamRow(const PulseBackend::Stream &s, QWidget *parent)
+        : QWidget(parent), m_index(s.index), m_iconImage(programIcon(s))
+    {
+        auto *l = new QHBoxLayout(this);
+        l->setContentsMargins(0, 0, 0, 0);
+        l->setSpacing(Theme::rowSpacing);
+        m_icon = new StreamIcon(this);
+        m_slider = new ValueSlider(this);
+        m_slider->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        m_pct = new TextItem(this);
+        m_pct->setPixelSize(Theme::smallFontSize);
+        m_pct->setHAlign(Qt::AlignRight);
+        m_pct->setFixedWidth(44);
+        l->addWidget(m_icon, 0, Qt::AlignVCenter);
+        l->addWidget(m_slider, 1, Qt::AlignVCenter);
+        l->addWidget(m_pct, 0, Qt::AlignVCenter);
+        PulseBackend *pa = PulseBackend::instance();
+        const uint32_t index = m_index;
+        m_icon->clicked = [this, pa, index]() { pa->setStreamMuted(index, !m_muted); };
+        QObject::connect(m_slider, &ValueSlider::moved, this,
+                         [pa, index](qreal v) { pa->setStreamVolume(index, v); });
+        sync(s);
+    }
+
+    void sync(const PulseBackend::Stream &s)
+    {
+        m_muted = s.muted;
+        m_icon->set(m_iconImage, s.name, s.muted);
+        m_slider->setValue(qMin<qreal>(1, s.volume));
+        /* Paused streams are dimmed like muted ones, but keep their level. */
+        m_slider->setFillColor(s.muted || !s.playing ? Theme::textMuted : Theme::accent);
+        m_pct->setText(s.muted ? QStringLiteral("Muted")
+                               : QString::number(qRound(s.volume * 100))
+                                     + QStringLiteral("%"));
+    }
+
+private:
+    uint32_t m_index;
+    bool m_muted = false;
+    QIcon m_iconImage;
+    StreamIcon *m_icon;
+    ValueSlider *m_slider;
+    TextItem *m_pct;
+};
+
 /* One icon in the power row. While the pointer is over it, its name shows in
  * the caption below the row. A `confirm` action needs a second click within
  * four seconds, and the caption says so meanwhile. No Q_OBJECT: plain
@@ -369,10 +498,15 @@ SystemPopup::SystemPopup(QWidget *anchor) : ContentPopup(anchor, 360)
                            statsRow);
     m_tempBox = new StatBox(glyph(U'\U000F050F'), QStringLiteral("Temp"),
                             statsRow);
+    m_diskBox = new StatBox(glyph(U'\U000F02CA'), QStringLiteral("Disk"),
+                            statsRow);
     sr->addWidget(m_cpuBox, 1);
     sr->addWidget(m_memBox, 1);
     sr->addWidget(m_tempBox, 1);
+    sr->addWidget(m_diskBox, 1);
     lay->addWidget(statsRow);
+    connect(DiskState::instance(), &DiskState::changed, this, &SystemPopup::syncDisk);
+    syncDisk();
 
     auto *sysProc = new CollectorProcess(this);
     sysProc->setCommand({"fanshell-qs-sysinfo"});
@@ -386,6 +520,7 @@ SystemPopup::SystemPopup(QWidget *anchor) : ContentPopup(anchor, 360)
                 if (visible) {
                     sysProc->start();
                     sysTimer->start(3000);
+                    DiskState::instance()->refresh();
                 } else {
                     sysTimer->stop();
                 }
@@ -414,6 +549,36 @@ SystemPopup::SystemPopup(QWidget *anchor) : ContentPopup(anchor, 360)
             [weather](bool visible) { weather->setPolling(visible); });
 
     lay->addWidget(new VpnWidget(body()));
+
+    /* ---- Keep awake / game mode ---- */
+    auto *modeRow = new QWidget(body());
+    auto *mr = new QHBoxLayout(modeRow);
+    mr->setContentsMargins(0, 0, 0, 0);
+    mr->setSpacing(Theme::rowSpacing);
+    auto *awake = new ShellButton(
+        glyph(U'\U000F0176') + QStringLiteral("  Keep awake"), modeRow); /* mdi coffee */
+    awake->setToolTip(QStringLiteral("Do not blank or lock the screen until turned off"));
+    auto *game = new ShellButton(
+        glyph(U'\U000F0297') + QStringLiteral("  Game mode"), modeRow); /* mdi gamepad */
+    game->setToolTip(QStringLiteral("Do not disturb, performance profile, night light "
+                                    "held, no blanking or locking"));
+    for (ShellButton *b : {awake, game})
+        b->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    mr->addWidget(awake, 1);
+    mr->addWidget(game, 1);
+    lay->addWidget(modeRow);
+    auto syncModes = [awake, game]() {
+        awake->setActive(IdleInhibitor::instance()->keepAwake());
+        game->setActive(GameMode::instance()->active());
+    };
+    connect(awake, &ShellButton::activated, this, []() {
+        IdleInhibitor *i = IdleInhibitor::instance();
+        i->setKeepAwake(!i->keepAwake());
+    });
+    connect(game, &ShellButton::activated, this, []() { GameMode::instance()->toggle(); });
+    connect(IdleInhibitor::instance(), &IdleInhibitor::changed, this, syncModes);
+    connect(GameMode::instance(), &GameMode::changed, this, syncModes);
+    syncModes();
 
     /* Full-width, standard D-Bus power-profile selector. It hides itself on
      * machines without a net.hadess.PowerProfiles provider. */
@@ -525,6 +690,16 @@ SystemPopup::SystemPopup(QWidget *anchor) : ContentPopup(anchor, 360)
             pa->setSourceVolume(v);
     });
 
+    /* ---- Each program's volume, while any has a stream ---- */
+    m_appsLabel = sectionLabel(QStringLiteral("Apps"), body());
+    lay->addWidget(m_appsLabel);
+    m_appsBox = new QWidget(body());
+    auto *al = new QVBoxLayout(m_appsBox);
+    al->setContentsMargins(0, 0, 0, 0);
+    al->setSpacing(Theme::rowSpacing);
+    lay->addWidget(m_appsBox);
+    connect(pa, &PulseBackend::streamsChanged, this, &SystemPopup::syncApps);
+
     lay->addWidget(new HLine(body()));
     lay->addWidget(sectionLabel(QStringLiteral("Output device"), body()));
 
@@ -574,6 +749,39 @@ SystemPopup::SystemPopup(QWidget *anchor) : ContentPopup(anchor, 360)
     lay->addStretch(0);
 
     syncAudio();
+    syncApps();
+}
+
+void SystemPopup::syncApps()
+{
+    const QVector<PulseBackend::Stream> &streams = PulseBackend::instance()->streams;
+    QVector<uint> key;
+    for (const PulseBackend::Stream &s : streams)
+        key << s.index;
+    auto *al = static_cast<QVBoxLayout *>(m_appsBox->layout());
+    if (key != m_appsKey) {
+        m_appsKey = key;
+        while (QLayoutItem *it = al->takeAt(0)) {
+            if (it->widget()) {
+                it->widget()->hide();
+                it->widget()->deleteLater();
+            }
+            delete it;
+        }
+        for (const PulseBackend::Stream &s : streams) {
+            auto *row = new StreamRow(s, m_appsBox);
+            al->addWidget(row);
+            row->show();
+        }
+        m_appsLabel->setVisible(!streams.isEmpty());
+        m_appsBox->setVisible(!streams.isEmpty());
+        if (isVisible())
+            relayout();
+        return;
+    }
+    for (int i = 0; i < streams.size(); i++)
+        if (auto *row = static_cast<StreamRow *>(al->itemAt(i)->widget()))
+            row->sync(streams[i]);
 }
 
 void SystemPopup::parseSysInfo(const QString &text)
@@ -602,6 +810,22 @@ void SystemPopup::parseSysInfo(const QString &text)
     if (!tempStr.isEmpty())
         m_tempBox->setValue(QStringLiteral("%1°C").arg(tempStr));
 
+    if (isVisible())
+        relayout();
+}
+
+void SystemPopup::syncDisk()
+{
+    const DiskState::Mount m = DiskState::instance()->fullest();
+    m_diskBox->setVisible(m.percent >= 0);
+    m_diskBox->setValue(QStringLiteral("%1%").arg(m.percent));
+    QStringList tip;
+    for (const DiskState::Mount &d : DiskState::instance()->mounts())
+        tip << QStringLiteral("%1: %2% full, %3 free")
+                   .arg(d.path)
+                   .arg(d.percent)
+                   .arg(NetSpeed::rate(double(d.freeBytes)));
+    m_diskBox->setToolTip(tip.join(QLatin1Char('\n')));
     if (isVisible())
         relayout();
 }

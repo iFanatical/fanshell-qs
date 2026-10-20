@@ -3,6 +3,7 @@
 #include <QMouseEvent>
 #include <QTimer>
 
+#include <algorithm>
 #include <cstring>
 
 #include <pulse/pulseaudio.h>
@@ -78,15 +79,24 @@ struct PulseCallbacks {
     {
         auto *self = static_cast<PulseBackend *>(ud);
         static thread_local QStringList pending;
+        static thread_local QVector<PulseBackend::Stream> pendingStreams;
         if (eol) {
             QStringList list = pending;
             pending.clear();
             list.removeDuplicates();
             list.sort();
+            QVector<PulseBackend::Stream> streams = pendingStreams;
+            pendingStreams.clear();
+            std::sort(streams.begin(), streams.end(),
+                      [](const PulseBackend::Stream &a, const PulseBackend::Stream &b) {
+                          return a.index < b.index;
+                      });
             QMetaObject::invokeMethod(
                 self,
-                [self, list]() {
+                [self, list, streams]() {
                     self->playingKnown = true;
+                    self->streams = streams;
+                    emit self->streamsChanged();
                     if (self->playing == list)
                         return;
                     self->playing = list;
@@ -95,7 +105,7 @@ struct PulseCallbacks {
                 Qt::QueuedConnection);
             return;
         }
-        if (!i || i->corked || i->client == PA_INVALID_INDEX)
+        if (!i || i->client == PA_INVALID_INDEX)
             return;
         const char *virt = pa_proplist_gets(i->proplist, "node.virtual");
         if (virt && !strcmp(virt, "true"))
@@ -103,7 +113,22 @@ struct PulseCallbacks {
         const char *name = pa_proplist_gets(i->proplist, PA_PROP_APPLICATION_NAME);
         if (!name)
             name = pa_proplist_gets(i->proplist, PA_PROP_APPLICATION_PROCESS_BINARY);
-        pending << QString::fromUtf8(name ? name : "audio");
+        const QString program = QString::fromUtf8(name ? name : "audio");
+        if (!i->corked)
+            pending << program;
+        PulseBackend::Stream st;
+        st.index = i->index;
+        st.name = program;
+        const char *icon = pa_proplist_gets(i->proplist, PA_PROP_APPLICATION_ICON_NAME);
+        st.iconName = QString::fromUtf8(icon ? icon : "");
+        const char *binary =
+            pa_proplist_gets(i->proplist, PA_PROP_APPLICATION_PROCESS_BINARY);
+        st.binary = QString::fromUtf8(binary ? binary : "");
+        st.volume = qreal(pa_cvolume_avg(&i->volume)) / qreal(PA_VOLUME_NORM);
+        st.muted = i->mute;
+        st.playing = !i->corked;
+        st.channels = i->volume.channels ? i->volume.channels : 2;
+        pendingStreams.push_back(st);
     }
 
     static void queryAll(PulseBackend *self)
@@ -364,6 +389,41 @@ void PulseBackend::setDefaultSink(const QString &name)
     if (o)
         pa_operation_unref(o);
     pa_threaded_mainloop_unlock(d->loop);
+}
+
+void PulseBackend::setStreamVolume(uint32_t index, qreal v)
+{
+    v = qBound<qreal>(0, v, 1);
+    auto it = std::find_if(streams.begin(), streams.end(),
+                           [index](const Stream &st) { return st.index == index; });
+    if (it == streams.end())
+        return;
+    pa_cvolume cv;
+    pa_cvolume_set(&cv, it->channels, (pa_volume_t)qRound64(v * PA_VOLUME_NORM));
+    pa_threaded_mainloop_lock(d->loop);
+    pa_operation *o =
+        pa_context_set_sink_input_volume(d->ctx, index, &cv, nullptr, nullptr);
+    if (o)
+        pa_operation_unref(o);
+    pa_threaded_mainloop_unlock(d->loop);
+    it->volume = v;
+    emit streamsChanged();
+}
+
+void PulseBackend::setStreamMuted(uint32_t index, bool m)
+{
+    auto it = std::find_if(streams.begin(), streams.end(),
+                           [index](const Stream &st) { return st.index == index; });
+    if (it == streams.end())
+        return;
+    pa_threaded_mainloop_lock(d->loop);
+    pa_operation *o =
+        pa_context_set_sink_input_mute(d->ctx, index, m ? 1 : 0, nullptr, nullptr);
+    if (o)
+        pa_operation_unref(o);
+    pa_threaded_mainloop_unlock(d->loop);
+    it->muted = m;
+    emit streamsChanged();
 }
 
 /* ----------------------------------------------------------- ClickableText */
