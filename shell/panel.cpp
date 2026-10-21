@@ -5,6 +5,7 @@
 #include <QHBoxLayout>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QTimer>
 
 #include "battery.h"
 #include "calendar.h"
@@ -169,6 +170,7 @@ Panel::Panel(WmState *state, QScreen *screen)
     connect(m_state, &WmState::changed, tray, updateTrayHost);
 
     connect(m_state, &WmState::changed, this, &Panel::syncFromState);
+    connect(m_state, &WmState::changed, this, &Panel::syncVisible);
     connect(m_state, &WmState::titleChanged, this,
             [this](const QString &monitorName) {
                 if (m_screen && m_screen->name() == monitorName)
@@ -201,6 +203,19 @@ Panel::Panel(WmState *state, QScreen *screen)
     spec.exclusiveZone = Theme::panelHeight;
     spec.keyboard = Surface::Keyboard::None;
     Surface::configure(this, screen, spec);
+
+    /* Whoever made the panel shows it; hide it again if its monitor is
+     * already fullscreen (a monitor plugged in under a fullscreen window). */
+    QTimer::singleShot(0, this, &Panel::syncVisible);
+}
+
+/* Out of a fullscreen window's way, as i3's bar. Unmapped, the window
+ * manager frees the panel's reserved space, and reserves it again when it
+ * maps. */
+void Panel::syncVisible()
+{
+    const WmState::Monitor *m = mon();
+    setVisible(!(m && m->fullscreen));
 }
 
 /* The tray lives on the primary output -- see WmState::primaryMonitor().

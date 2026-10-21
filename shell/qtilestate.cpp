@@ -29,6 +29,7 @@ const char snapshotCode[] = R"PY((lambda q: __import__("json").dumps({
          "scratchpad": type(g).__name__ == "ScratchPad",
          "windows": len(g.windows),
          "urgent": any(w.urgent for w in g.windows),
+         "fullscreen": any(w.fullscreen for w in g.windows),
          "layout": g.layout.name if g.layout else "",
          "title": (g.current_window.name or "") if g.current_window else ""}
         for g in q.groups]}))(self))PY";
@@ -204,6 +205,7 @@ void QtileState::refresh()
         const QJsonObject group = byName.value(showing);
         m.layout = group.value(QStringLiteral("layout")).toString();
         m.title = group.value(QStringLiteral("title")).toString();
+        m.fullscreen = group.value(QStringLiteral("fullscreen")).toBool();
 
         const QStringList names = own.value(m.id);
         for (int i = 0; i < names.size() && i < 32; ++i) {

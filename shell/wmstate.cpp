@@ -27,7 +27,8 @@ bool sameMonitors(const QVector<WmState::Monitor> &a,
                 || x.w != y.w || x.h != y.h || x.focused != y.focused
                 || x.selected != y.selected || x.elsewhere != y.elsewhere
                 || x.occupied != y.occupied || x.urgent != y.urgent
-                || x.layout != y.layout || x.title != y.title)
+                || x.layout != y.layout || x.title != y.title
+                || x.fullscreen != y.fullscreen)
             return false;
     }
     return true;

@@ -41,6 +41,9 @@ public:
         quint32 urgent = 0;
         QString layout;      /* "tiling", "monocle", ... */
         QString title;       /* focused window on this monitor */
+        /* A window on what this monitor shows is fullscreen: the panel
+         * hides, as i3's bar does. */
+        bool fullscreen = false;
     };
 
     /* What the backend can do, so the UI offers only that. */

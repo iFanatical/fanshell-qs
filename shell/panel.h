@@ -62,6 +62,7 @@ private:
     bool hostsTray() const;
     void syncFromState();
     void syncTitle();
+    void syncVisible();
     /* Positions m_leftBox / m_clock / m_rightBox: the clock sits at a fixed
      * horizontal center of the bar (clamped so it never collides with the
      * right-side pills), and m_leftBox gets whatever space is left of it. */
