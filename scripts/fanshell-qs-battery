@@ -82,6 +82,23 @@ elif [ "$full_count" = "$count" ]; then st="Full"
 else st=$first_st
 fi
 
+# The charger says first. Plugged in, the HP's battery goes on saying
+# Discharging for 4-5 s (pulled, it says Charging a moment), while the AC
+# supply's online flag changes at once; where the two disagree, believe the
+# charger. Its rate is then the old direction's, so no time estimate.
+ac=
+for s in /sys/class/power_supply/*; do
+	[ "$(read_attr "$s/type")" = Mains ] || continue
+	o=$(read_attr "$s/online")
+	[ -n "$o" ] || continue
+	[ "$o" = 1 ] && ac=1
+	[ -n "$ac" ] || ac=0
+done
+stale=0
+if [ "$ac" = 1 ] && [ "$st" = Discharging ]; then st="Charging"; stale=1
+elif [ "$ac" = 0 ] && [ "$st" = Charging ]; then st="Discharging"; stale=1
+fi
+
 if [ "$st" = "Charging" ]; then icon="󰂅"; color="#9ece6a"
 elif [ "$cap" -le 5 ];  then icon="󰁺"; color="#f7768e"
 elif [ "$cap" -le 20 ]; then icon="󰁻"; color="#f7768e"
@@ -93,7 +110,7 @@ fi
 
 # No usable rate just means no time estimate; the percentage still stands.
 mins=""
-if [ "$sums" = 1 ] && [ "$sum_rate" -gt 0 ]; then
+if [ "$stale" = 0 ] && [ "$sums" = 1 ] && [ "$sum_rate" -gt 0 ]; then
 	case "$st" in
 	Charging)
 		mins=$(( (sum_full - sum_now) * 60 / sum_rate ))
