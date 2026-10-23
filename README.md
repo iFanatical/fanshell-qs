@@ -655,6 +655,7 @@ ups.community=public
 | `weather.unit` | `C` for Celsius, default Fahrenheit |
 | `ups.host` | the UPS's SNMP card; unset, the power pill shows the CPU+GPU estimate instead (see [UPS](#ups)) |
 | `ups.community` | SNMPv1 community (default `public`) |
+| `power.saver_below` | battery percent at which, on battery, the power profile switches to Power Saver, and back to the one it found once plugged in; `off` to never (default `50`) |
 | `battery.path` | the battery `power_supply` dir(s) to read, space-separated; default every `BAT*` that reports a charge, combined |
 | `network.bridge` | path to `net-bridge.sh` for the non-NetworkManager backend (default `/usr/local/bin/net-bridge.sh`) |
 | `power.window` | RAPL sample window in seconds (default `0.5`) |

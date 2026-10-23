@@ -11,6 +11,9 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "paths.h"
+#include "powerprofiles.h"
+
 static QString formatDuration(int minutes)
 {
     if (minutes < 0)
@@ -20,6 +23,66 @@ static QString formatDuration(int minutes)
         return QStringLiteral("%1h %2m").arg(h).arg(m);
     return QStringLiteral("%1m").arg(m);
 }
+
+/* ----------------------------------------------------------- BatterySaver */
+
+namespace {
+
+/* Switches the power profile to Power Saver when the battery, draining,
+ * falls to power.saver_below percent (default 50; off turns it off), and
+ * back to the profile it found once the charger is in. Only on crossing:
+ * a profile picked by hand in between stays, and the one found is put back
+ * only if Power Saver is still the profile then. */
+class BatterySaver : public QObject {
+public:
+    explicit BatterySaver(BatteryState *battery)
+        : QObject(battery), m_battery(battery)
+    {
+        connect(battery, &BatteryState::changed, this, &BatterySaver::check);
+        /* At login the profile daemon may answer after the battery. */
+        connect(PowerProfileState::instance(), &PowerProfileState::changed,
+                this, &BatterySaver::check);
+    }
+
+private:
+    static int threshold()
+    {
+        const QString v = Paths::setting(QStringLiteral("power.saver_below"),
+                                         QStringLiteral("50"));
+        return v.toLower() == QLatin1String("off") ? 0 : v.toInt();
+    }
+
+    void check()
+    {
+        PowerProfileState *power = PowerProfileState::instance();
+        if (!power->available())
+            return;
+        const bool low = m_battery->present
+                         && m_battery->status == QLatin1String("Discharging")
+                         && m_battery->percent <= threshold();
+        if (low == m_low)
+            return;
+        m_low = low;
+        const QString saver = QStringLiteral("power-saver");
+        if (low) {
+            if (power->activeProfile() != saver
+                    && power->profiles().contains(saver)) {
+                m_before = power->activeProfile();
+                power->setProfile(saver);
+            }
+        } else if (!m_before.isEmpty()) {
+            if (power->activeProfile() == saver)
+                power->setProfile(m_before);
+            m_before.clear();
+        }
+    }
+
+    BatteryState *m_battery;
+    bool m_low = false;
+    QString m_before; /* the profile it found, while it has switched */
+};
+
+} /* namespace */
 
 /* ----------------------------------------------------------- BatteryState */
 
@@ -41,6 +104,7 @@ BatteryState::BatteryState(QObject *parent) : QObject(parent)
     timer->start(60000);
     m_proc.start();
     watchUevents();
+    new BatterySaver(this);
 }
 
 /* The kernel's uevents for power supplies: the charger going in or out (the
