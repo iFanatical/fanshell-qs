@@ -26,6 +26,7 @@ struct Entry {
     xcb_window_t prevFocus = XCB_NONE;
     bool grabbed = false;
     int grabTries = 0;
+    QVector<quint32> strut;   /* the _NET_WM_STRUT_PARTIAL last written */
 };
 
 QHash<const QWidget *, Entry> g_entries;
@@ -139,6 +140,8 @@ void place(int areaStart, int areaLen, bool startAnchor, bool endAnchor,
     len = qMax(1, len);
 }
 
+void applyStrut(QWidget *w, Entry &e);
+
 void applyGeometry(QWidget *w)
 {
     auto it = g_entries.find(w);
@@ -167,12 +170,21 @@ void applyGeometry(QWidget *w)
     it->origin = QPoint(x, y) - full.topLeft();
     w->move(x, y);
     w->resize(width, height);
+
+    /* A dock follows its output when the layout changes (a monitor plugged
+     * in moves the others), and so must the space it reserves. Before the
+     * window exists, configure() writes the strut instead. */
+    if (w->internalWinId() && isDock(spec)) {
+        applyStrut(w, *it);
+        xcb_flush(conn());
+    }
 }
 
 /* _NET_WM_STRUT(_PARTIAL) for docks, in root-window device pixels. Read by
  * any EWMH window manager (qtile); the patched oxwm uses the dock's
- * geometry directly, which comes to the same thing. */
-void applyStrut(QWidget *w, const Entry &e)
+ * geometry directly, which comes to the same thing. Written only when it
+ * changes: the window manager re-reserves on every write. */
+void applyStrut(QWidget *w, Entry &e)
 {
     if (!isDock(e.spec) || !e.screen)
         return;
@@ -196,6 +208,9 @@ void applyStrut(QWidget *w, const Entry &e)
         partial[8] = quint32(x0);
         partial[9] = quint32(x1);
     }
+    if (partial == e.strut)
+        return;
+    e.strut = partial;
     const xcb_window_t win = xcb_window_t(w->winId());
     setCardinals(win, "_NET_WM_STRUT_PARTIAL", partial);
     setCardinals(win, "_NET_WM_STRUT", partial.mid(0, 4));
