@@ -59,7 +59,7 @@ nm_status() {
 		EOF
 		if [ "$kind" = wifi ]; then
 			ssid=$name
-			active=$(nmcli -t -f ACTIVE,SIGNAL,SECURITY device wifi list ifname "$dev" 2>/dev/null |
+			active=$(nmcli -t -f ACTIVE,SIGNAL,SECURITY device wifi list ifname "$dev" --rescan no 2>/dev/null |
 				awk -F: '$1=="yes"{print $2 "\t" $3; exit}')
 			signal=${active%%"$TAB"*}
 			security=${active#*"$TAB"}
@@ -74,8 +74,12 @@ nm_status() {
 	printf 'gateway=%s\n' "${gw:-$(default_gw)}"
 }
 
+# --rescan no here and in nm_status: by default `device wifi list` makes
+# NetworkManager scan every channel when its last scan is over 30 s old, and
+# the bar asks every 30 s -- a radio scan of about 4 s, twice a minute, on
+# battery. The connected network's signal stays current without one.
 nm_signal() {
-	nmcli -t -f ACTIVE,SIGNAL,SECURITY device wifi list 2>/dev/null |
+	nmcli -t -f ACTIVE,SIGNAL,SECURITY device wifi list --rescan no 2>/dev/null |
 		awk -F: '$1=="yes"{print "signal=" $2; print "security=" $3; exit}'
 }
 

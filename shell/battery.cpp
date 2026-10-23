@@ -2,8 +2,14 @@
 
 #include <QHBoxLayout>
 #include <QPainter>
+#include <QSocketNotifier>
 #include <QTimer>
 #include <QVBoxLayout>
+
+#include <cstring>
+#include <linux/netlink.h>
+#include <sys/socket.h>
+#include <unistd.h>
 
 static QString formatDuration(int minutes)
 {
@@ -28,10 +34,58 @@ BatteryState::BatteryState(QObject *parent) : QObject(parent)
     m_proc.setCommand({"fanshell-qs-battery"});
     connect(&m_proc, &CollectorProcess::finished, this, &BatteryState::parse);
 
+    /* Plugging in and unplugging come as uevents (watchUevents), so the poll
+     * only follows the charge, which moves about a percent a minute at most. */
     auto *timer = new QTimer(this);
     connect(timer, &QTimer::timeout, &m_proc, [this]() { m_proc.start(); });
-    timer->start(15000);
+    timer->start(60000);
     m_proc.start();
+    watchUevents();
+}
+
+/* The kernel's uevents for power supplies: the charger going in or out (the
+ * AC supply), and each battery's own status changes. A plug comes as a burst
+ * of them, AC first; the battery's status follows a moment later on some
+ * firmware (the HP's says Discharging for a second or two after the plug),
+ * so read now and once more after it has settled. */
+void BatteryState::watchUevents()
+{
+    const int fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_NONBLOCK | SOCK_CLOEXEC,
+                          NETLINK_KOBJECT_UEVENT);
+    if (fd < 0)
+        return;
+    sockaddr_nl addr{};
+    addr.nl_family = AF_NETLINK;
+    addr.nl_groups = 1; /* the kernel's own events; udev's are group 2 */
+    if (bind(fd, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) < 0) {
+        close(fd);
+        return;
+    }
+
+    auto *burst = new QTimer(this);
+    burst->setSingleShot(true);
+    burst->setInterval(100);
+    connect(burst, &QTimer::timeout, &m_proc, [this]() { m_proc.start(); });
+    auto *settle = new QTimer(this);
+    settle->setSingleShot(true);
+    settle->setInterval(2500);
+    connect(settle, &QTimer::timeout, &m_proc, [this]() { m_proc.start(); });
+
+    auto *notifier = new QSocketNotifier(fd, QSocketNotifier::Read, this);
+    connect(notifier, &QSocketNotifier::activated, this, [fd, burst, settle]() {
+        static const char key[] = "SUBSYSTEM=power_supply"; /* with its NUL */
+        char buf[8192];
+        bool power = false;
+        ssize_t n;
+        while ((n = recv(fd, buf, sizeof(buf), 0)) > 0) {
+            if (memmem(buf, size_t(n), key, sizeof(key)))
+                power = true;
+        }
+        if (power) {
+            burst->start();
+            settle->start();
+        }
+    });
 }
 
 void BatteryState::parse(const QString &text)

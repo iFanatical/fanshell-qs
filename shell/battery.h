@@ -31,6 +31,7 @@ signals:
 private:
     explicit BatteryState(QObject *parent = nullptr);
     void parse(const QString &text);
+    void watchUevents();
 
     CollectorProcess m_proc;
 };
