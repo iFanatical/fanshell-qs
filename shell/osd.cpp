@@ -294,6 +294,14 @@ void HardwareOsd::configureFor(QScreen *screen)
     }
     m_screen = screen;
     setFixedSize(osdWidth, osdHeight);
+    /* Shape the window to the card, as the notification toasts do: picom
+     * blurs within the X shape, so without this the shadow margin would blur
+     * as a square-cornered frosted box. The painted shadow falls outside. */
+    QPainterPath path;
+    path.addRoundedRect(QRectF(rect()).adjusted(osdShadowRange, osdShadowRange,
+                                                -osdShadowRange, -osdShadowRange),
+                        Theme::radius, Theme::radius);
+    setMask(QRegion(path.toFillPolygon().toPolygon()));
     if (m_configured)
         return;
     Surface::SurfaceSpec spec;
