@@ -1,5 +1,10 @@
 #include "nightlight.h"
 
+#include "surface.h"
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+#include "screenshader.h"
+#endif
+
 #include <QGridLayout>
 #include <QGuiApplication>
 #include <QHBoxLayout>
@@ -504,6 +509,15 @@ void NightLight::refresh()
 
 void NightLight::apply(int kelvin)
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* Hyprland: a gain in the screen shader, beside vibrance. */
+    if (Surface::wayland()) {
+        const Rgb g = gains(std::min(kelvin, int(neutral)));
+        ScreenShader::instance()->setGain(g.r, g.g, g.b);
+        m_written = kelvin;
+        return;
+    }
+#endif
     /* Normal and already written: leave the ramps to anyone else. */
     if (kelvin >= neutral && m_written >= neutral)
         return;

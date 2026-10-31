@@ -10,6 +10,10 @@
 #include <cstdlib>
 
 #include "paths.h"
+#include "surface.h"
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+#include "screenshader.h"
+#endif
 
 namespace {
 
@@ -149,6 +153,24 @@ Vibrance::Vibrance(QObject *parent) : QObject(parent)
 void Vibrance::rescan()
 {
     QVector<Output> found;
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* Hyprland: every output, through the screen shader. */
+    if (Surface::wayland()) {
+        for (const QScreen *s : QGuiApplication::screens()) {
+            Output o;
+            o.name = s->name();
+            o.saturation = normal;
+            /* The shader holds what restore() last set. */
+            for (const Output &was : std::as_const(m_outputs))
+                if (was.name == o.name)
+                    o.saturation = was.saturation;
+            found.push_back(o);
+        }
+        m_outputs = found;
+        emit changed();
+        return;
+    }
+#endif
     xcb_connection_t *c = conn();
     if (c) {
         const xcb_screen_t *screen =
@@ -196,6 +218,16 @@ void Vibrance::rescan()
  * from it (a fresh X server starts at the identity matrix). */
 void Vibrance::restore()
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland()) {
+        for (Output &o : m_outputs) {
+            o.saturation = m_saved.value(o.name, normal);
+            ScreenShader::instance()->setSaturation(o.name, o.saturation);
+        }
+        emit changed();
+        return;
+    }
+#endif
     xcb_connection_t *c = conn();
     if (!c)
         return;
@@ -229,7 +261,7 @@ double Vibrance::saturation(const QString &output) const
 void Vibrance::setSaturation(const QString &output, double saturation)
 {
     xcb_connection_t *c = conn();
-    if (!c)
+    if (!c && !Surface::wayland())
         return;
     saturation = rounded(clampSaturation(saturation));
     for (Output &o : m_outputs) {
@@ -237,7 +269,12 @@ void Vibrance::setSaturation(const QString &output, double saturation)
             continue;
         if (same(o.saturation, saturation))
             return;
-        writeSaturation(c, o.id, saturation);
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+        if (Surface::wayland())
+            ScreenShader::instance()->setSaturation(o.name, saturation);
+        else
+#endif
+            writeSaturation(c, o.id, saturation);
         o.saturation = saturation;
         m_saved.insert(o.name, saturation);
         m_saveTimer.start();

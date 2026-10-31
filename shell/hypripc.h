@@ -21,7 +21,9 @@
 #include <QObject>
 #include <QJsonObject>
 #include <QString>
+#include <QPair>
 #include <QVariant>
+#include <QVector>
 
 namespace HyprIpc {
 
@@ -55,12 +57,10 @@ QJsonDocument requestJson(const QByteArray &command);
  * fails to parse. Neither has a side effect. */
 bool dispatch(const QString &luaForm, const QString &legacyForm);
 
-/* Change one config option at runtime, as `hyprctl keyword` does: `option`
- * is its classic path ("input:repeat_rate", "device[logitech-g-pro]:
- * sensitivity", "monitor"), `value` its classic value. Under a Lua config
- * (0.56) the same change is made by evaluating `lua`, a statement such as
- * `hl.config({ input = { repeat_rate = 35 } })`; when `lua` is empty only
- * the keyword is tried. The dialect is probed once, as for dispatch(). */
+/* Change config at run time: under the classic config, as `hyprctl keyword
+ * OPTION VALUE` does; under the Lua config (0.56), which refuses keywords,
+ * by evaluating `lua`, a statement such as hl.device({ name = ..., ... }).
+ * Which one is running is probed once. */
 bool keyword(const QString &option, const QString &value,
              const QString &lua = QString());
 
@@ -73,10 +73,10 @@ QString luaValue(const QVariant &v);
  * keyword() does, with the Lua form built from the path (nested tables:
  * hl.config({ decoration = { blur = { enabled = false } } })). */
 bool setOption(const QString &path, const QVariant &value);
-/* `getoption`'s answer, {"int": ..., "float": ..., "str": ..., "set": ...};
- * empty when Hyprland has no such option. */
-QJsonObject option(const QString &path);
-/* option()'s value, whichever field holds it. */
+/* Several at once, applied as one config change. */
+bool setOptions(const QVector<QPair<QString, QVariant>> &options);
+/* An option's value (int, float or string); invalid when Hyprland has no
+ * such option or is unreachable. */
 QVariant optionValue(const QString &path);
 
 } /* namespace HyprIpc */

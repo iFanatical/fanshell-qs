@@ -52,8 +52,8 @@ PKGS     += $(WL_PKGS)
 override CXXFLAGS += -DFANSHELL_QS_HAVE_WAYLAND \
                      -I$(patsubst %/,%,$(dir $(LSQT_DIR)))
 override LDLIBS   += -lLayerShellQtInterface
-WL_MODULES = hypripc hyprstate
-WL_MOCHDRS = hypripc hyprstate
+WL_MODULES = hypripc hyprstate screenshader
+WL_MOCHDRS = hypripc hyprstate screenshader
 endif
 
 CXX      ?= g++
