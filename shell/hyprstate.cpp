@@ -53,8 +53,13 @@ HyprState::HyprState(QObject *parent) : WmState(parent)
 
     connect(&m_events, &HyprEventStream::hyprEvent, this,
             [this](const QString &name, const QString &data) {
-                if (name == QLatin1String("configreloaded"))
+                if (name == QLatin1String("configreloaded")) {
                     refreshConfig();
+                    emit configReloaded();
+                }
+                if (name.startsWith(QLatin1String("monitoradded"))
+                        || name.startsWith(QLatin1String("monitorremoved")))
+                    emit outputsChanged();
                 /* Self-contained: take it at its word. */
                 if (name == QLatin1String("submap")) {
                     const QString next = normalizeSubmap(data);
@@ -107,6 +112,22 @@ QString HyprState::unavailableHint() const
     if (!HyprIpc::available())
         return QStringLiteral("Hyprland's IPC socket is not there yet.");
     return QString();
+}
+
+QString HyprState::primaryMonitor() const
+{
+    const Monitor *best = nullptr;
+    int lowest = 0;
+    for (const Monitor &m : monitors) {
+        const QVector<int> block = m_blocks.value(m.id);
+        if (block.isEmpty())
+            continue;
+        if (!best || block.first() < lowest) {
+            best = &m;
+            lowest = block.first();
+        }
+    }
+    return best ? best->name : WmState::primaryMonitor();
 }
 
 void HyprState::viewWorkspace(int monitorId, int index)

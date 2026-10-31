@@ -38,6 +38,11 @@ public:
     Features features() const override;
     QString unavailableHint() const override;
 
+    /* Hyprland has no primary output: the one holding the lowest-numbered
+     * workspace, which follows the workspace rules and stays put as focus
+     * moves. */
+    QString primaryMonitor() const override;
+
     void viewWorkspace(int monitorId, int index) override;
     void resetSubmap() override;
 

@@ -78,7 +78,7 @@ public:
     /* The output that hosts the tray and notifications: X's primary output
      * when the window manager has a monitor there, else its lowest-numbered
      * one. Stable as focus moves, unlike focusedMonitor(). */
-    QString primaryMonitor() const;
+    virtual QString primaryMonitor() const;
     /* The output the window manager has focused. This is what the launcher
      * opens on, so it lands where the user is working. Falls back to the
      * primary before the first refresh. */
@@ -110,6 +110,12 @@ signals:
     /* Cheap title-only update for one panel; does not imply any workspace,
      * monitor, tray-host, or layout state changed. */
     void titleChanged(const QString &monitorName);
+    /* Outputs were added or removed, as the window manager reports it
+     * (Hyprland; on X11 RandR says so instead). */
+    void outputsChanged();
+    /* The window manager reloaded its config (Hyprland), which puts back
+     * what the shell changed at run time: outputs, input settings. */
+    void configReloaded();
 
 protected:
     explicit WmState(QObject *parent = nullptr);

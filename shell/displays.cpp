@@ -10,6 +10,9 @@
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QRegularExpression>
 #include <QKeyEvent>
 #include <QMouseEvent>
 #include <QPainter>
@@ -37,6 +40,9 @@
 #include <unistd.h>
 
 #include "wmstate.h"
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+#include "hypripc.h"
+#endif
 #include "idleinhibit.h"
 #include "lockscreen.h"
 #include "nightlight.h"
@@ -163,12 +169,108 @@ int enabledCount(const QVector<Output> &outputs)
     return n;
 }
 
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+/* Hyprland's transform: 0 normal, 1 90 degrees (xrandr's left), 2 180,
+ * 3 270 (right); 4-7 are the flipped ones, shown as their unflipped
+ * rotation. */
+QString transformName(int t)
+{
+    switch (t & 3) {
+    case 1:
+        return QStringLiteral("left");
+    case 2:
+        return QStringLiteral("inverted");
+    case 3:
+        return QStringLiteral("right");
+    default:
+        return QStringLiteral("normal");
+    }
+}
+
+/* "1920x1080@165.00Hz", as availableModes lists them. */
+bool parseMode(const QString &text, Mode &m)
+{
+    static const QRegularExpression re(
+        QStringLiteral("^(\\d+)x(\\d+)@([0-9.]+)"));
+    const QRegularExpressionMatch match = re.match(text);
+    if (!match.hasMatch())
+        return false;
+    m.w = match.captured(1).toInt();
+    m.h = match.captured(2).toInt();
+    m.rate = std::round(match.captured(3).toDouble() * 100.0) / 100.0;
+    return true;
+}
+
+QVector<Output> queryHyprland()
+{
+    QVector<Output> out;
+    for (const QJsonValue &v : HyprIpc::requestArray("monitors all")) {
+        const QJsonObject j = v.toObject();
+        Output o;
+        o.name = j.value(QStringLiteral("name")).toString();
+        if (o.name.isEmpty())
+            continue;
+        o.enabled = !j.value(QStringLiteral("disabled")).toBool();
+        o.x = j.value(QStringLiteral("x")).toInt();
+        o.y = j.value(QStringLiteral("y")).toInt();
+        o.w = j.value(QStringLiteral("width")).toInt();
+        o.h = j.value(QStringLiteral("height")).toInt();
+        o.rate = std::round(j.value(QStringLiteral("refreshRate")).toDouble() * 100.0)
+                 / 100.0;
+        o.rotate = transformName(j.value(QStringLiteral("transform")).toInt());
+        o.scale = j.value(QStringLiteral("scale")).toDouble(1.0);
+        if (o.scale <= 0)
+            o.scale = 1.0;
+        o.vrr = j.value(QStringLiteral("vrr")).toBool() ? QStringLiteral("on")
+                                                         : QStringLiteral("off");
+        bool first = true;
+        for (const QJsonValue &mv : j.value(QStringLiteral("availableModes")).toArray()) {
+            Mode m;
+            if (!parseMode(mv.toString(), m))
+                continue;
+            /* The connector's preferred mode comes first. */
+            if (first)
+                o.preferred = m;
+            first = false;
+            bool seen = false;
+            for (const Mode &q : o.modes)
+                seen = seen || (q.w == m.w && q.h == m.h && sameRate(q.rate, m.rate));
+            if (!seen)
+                o.modes << m;
+        }
+        std::sort(o.modes.begin(), o.modes.end(), [](const Mode &a, const Mode &b) {
+            if (a.w * a.h != b.w * b.h)
+                return a.w * a.h > b.w * b.h;
+            return a.rate > b.rate;
+        });
+        if (o.modes.isEmpty() && o.w > 0)
+            o.modes << Mode{o.w, o.h, o.rate};
+        if (o.preferred.w <= 0 && !o.modes.isEmpty())
+            o.preferred = o.modes.first();
+        if (!o.enabled || o.w <= 0) {
+            o.w = o.preferred.w;
+            o.h = o.preferred.h;
+            o.rate = o.preferred.rate;
+        }
+        out.push_back(o);
+    }
+    std::sort(out.begin(), out.end(), [](const Output &a, const Output &b) {
+        return a.name < b.name;
+    });
+    return out;
+}
+#endif
+
 } /* namespace */
 
 /* ------------------------------------------------------------- Displays:: */
 
 QVector<Output> Displays::query()
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland())
+        return queryHyprland();
+#endif
     QVector<Output> out;
     xcb_connection_t *c = conn();
     if (!c)
@@ -303,6 +405,10 @@ QString Displays::profile(const QVector<Output> &outputs)
         if (o.rate > 0)
             s += QStringLiteral(" rate=%1").arg(o.rate, 0, 'f', 2);
         s += QStringLiteral(" pos=%1x%2 rotate=%3").arg(o.x).arg(o.y).arg(o.rotate);
+        if (std::fabs(o.scale - 1.0) > 0.001)
+            s += QStringLiteral(" scale=%1").arg(o.scale, 0, 'g', 6);
+        if (!o.vrr.isEmpty())
+            s += QStringLiteral(" vrr=") + o.vrr;
         if (!o.tearFree.isEmpty())
             s += QStringLiteral(" tearfree=") + o.tearFree;
         if (o.primary)
@@ -539,6 +645,18 @@ const QStringList rotations{QStringLiteral("normal"), QStringLiteral("left"),
 const QStringList rotationLabels{QStringLiteral("Normal"),
                                  QStringLiteral("Left"), QStringLiteral("Right"),
                                  QStringLiteral("Upside down")};
+/* Hyprland only. */
+const QVector<double> scales{1.0, 1.25, 1.5, 1.75, 2.0, 2.5, 3.0};
+const QStringList vrrModes{QStringLiteral("off"), QStringLiteral("on"),
+                           QStringLiteral("fullscreen")};
+const QStringList vrrLabels{QStringLiteral("Off"), QStringLiteral("On"),
+                            QStringLiteral("Fullscreen only")};
+
+QString scaleLabel(double s)
+{
+    return QStringLiteral("%1%").arg(qRound(s * 100));
+}
+
 const QStringList tearFreeModes{QStringLiteral("auto"), QStringLiteral("on"),
                                 QStringLiteral("off")};
 const QStringList tearFreeLabels{QStringLiteral("Auto"), QStringLiteral("On"),
@@ -571,7 +689,8 @@ private:
     void syncFooter();
     bool dirty() const;
     Output *selected();
-    void resizeSelected(int w, int h, const QString &rotate);
+    /* `scale` 0 keeps the output's own. */
+    void resizeSelected(int w, int h, const QString &rotate, double scale = 0);
     void setOutputOn(bool on);
     void apply();
     void keep();
@@ -598,6 +717,10 @@ private:
     Selector *m_rotation;
     QWidget *m_tearFreeLabel;
     Selector *m_tearFree;
+    QWidget *m_scaleLabel;
+    Selector *m_scale;
+    QWidget *m_vrrLabel;
+    Selector *m_vrr;
     QWidget *m_vibranceLabel;
     QWidget *m_vibranceRow;
     ValueSlider *m_vibrance;
@@ -667,6 +790,8 @@ DisplaysWindow::DisplaysWindow()
     tl->addWidget(m_enabled);
     tl->addWidget(m_primary);
     tl->addStretch(1);
+    /* Hyprland has no primary output. */
+    m_primary->setVisible(!Surface::wayland());
 
     m_resolution = new Selector(m_list, m_box);
     m_rate = new Selector(m_list, m_box);
@@ -688,6 +813,20 @@ DisplaysWindow::DisplaysWindow()
     grid->addWidget(m_tearFreeLabel, 2, 2);
     grid->addWidget(m_tearFree, 2, 3);
 
+    m_scale = new Selector(m_list, m_box);
+    m_scale->setToolTip(QStringLiteral(
+        "How large everything is drawn on this display"));
+    m_vrr = new Selector(m_list, m_box);
+    m_vrr->setToolTip(QStringLiteral(
+        "Adaptive sync (FreeSync, G-Sync): the display follows the frame "
+        "rate. Fullscreen only: just for fullscreen windows, such as games"));
+    m_scaleLabel = fieldLabel(QStringLiteral("Scale"), m_box);
+    m_vrrLabel = fieldLabel(QStringLiteral("Adaptive sync"), m_box);
+    grid->addWidget(m_scaleLabel, 3, 0);
+    grid->addWidget(m_scale, 3, 1);
+    grid->addWidget(m_vrrLabel, 3, 2);
+    grid->addWidget(m_vrr, 3, 3);
+
     /* Vibrance applies (and saves) at once, outside the layout trial. */
     m_vibranceLabel = fieldLabel(QStringLiteral("Vibrance"), m_box);
     m_vibranceRow = new QWidget(m_box);
@@ -703,8 +842,8 @@ DisplaysWindow::DisplaysWindow()
     m_vibrancePct->setToolTip(QStringLiteral("Reset to 100%"));
     vl->addWidget(m_vibrance, 1, Qt::AlignVCenter);
     vl->addWidget(m_vibrancePct, 0, Qt::AlignVCenter);
-    grid->addWidget(m_vibranceLabel, 3, 0);
-    grid->addWidget(m_vibranceRow, 3, 1, 1, 3);
+    grid->addWidget(m_vibranceLabel, 4, 0);
+    grid->addWidget(m_vibranceRow, 4, 1, 1, 3);
     lay->addLayout(grid);
 
     lay->addWidget(new HLine(m_box));
@@ -778,6 +917,24 @@ DisplaysWindow::DisplaysWindow()
     m_rotation->chosen = [this](int i) {
         if (Output *o = selected())
             resizeSelected(o->w, o->h, rotations.value(i, o->rotate));
+    };
+    m_scale->chosen = [this](int i) {
+        Output *o = selected();
+        if (!o || i < 0)
+            return;
+        QVector<double> offered = scales;
+        if (!offered.contains(o->scale))
+            offered << o->scale;
+        std::sort(offered.begin(), offered.end());
+        if (i < offered.size())
+            resizeSelected(o->w, o->h, o->rotate, offered[i]);
+    };
+    m_vrr->chosen = [this](int i) {
+        Output *o = selected();
+        if (o && i >= 0 && i < vrrModes.size()) {
+            o->vrr = vrrModes[i];
+            syncAll();
+        }
     };
     m_tearFree->chosen = [this](int i) {
         Output *o = selected();
@@ -960,10 +1117,28 @@ void DisplaysWindow::syncDetails()
     m_tearFree->setVisible(tearFree);
     m_tearFree->setChoices(tearFreeLabels,
                            tearFree ? int(tearFreeModes.indexOf(o->tearFree)) : -1);
+    /* Scale and adaptive sync: Hyprland's, so only there. */
+    const bool hypr = on && Surface::wayland();
+    QVector<double> offered = scales;
+    if (o && !offered.contains(o->scale))
+        offered << o->scale;
+    std::sort(offered.begin(), offered.end());
+    QStringList scaleLabels;
+    for (double v : offered)
+        scaleLabels << scaleLabel(v);
+    m_scaleLabel->setVisible(hypr);
+    m_scale->setVisible(hypr);
+    m_scale->setChoices(scaleLabels, o ? int(offered.indexOf(o->scale)) : -1);
+    const bool vrr = hypr && !o->vrr.isEmpty();
+    m_vrrLabel->setVisible(vrr);
+    m_vrr->setVisible(vrr);
+    m_vrr->setChoices(vrrLabels, vrr ? int(vrrModes.indexOf(o->vrr)) : -1);
     for (QWidget *w : {static_cast<QWidget *>(m_resolution),
                        static_cast<QWidget *>(m_rate),
                        static_cast<QWidget *>(m_rotation),
-                       static_cast<QWidget *>(m_tearFree)})
+                       static_cast<QWidget *>(m_tearFree),
+                       static_cast<QWidget *>(m_scale),
+                       static_cast<QWidget *>(m_vrr)})
         w->setEnabled(on && !m_pending && !m_running);
 
     syncVibrance();
@@ -1022,7 +1197,8 @@ void DisplaysWindow::syncFooter()
 /* Change the selected output's size (mode or rotation) in place, sliding
  * everything to its right or below by the difference so neighbours stay
  * flush instead of overlapping or leaving a gap. */
-void DisplaysWindow::resizeSelected(int w, int h, const QString &rotate)
+void DisplaysWindow::resizeSelected(int w, int h, const QString &rotate,
+                                    double scale)
 {
     Output *o = selected();
     if (!o)
@@ -1031,6 +1207,8 @@ void DisplaysWindow::resizeSelected(int w, int h, const QString &rotate)
     o->w = w;
     o->h = h;
     o->rotate = rotate;
+    if (scale > 0)
+        o->scale = scale;
     const QRect after = o->rect();
     const int dw = after.width() - before.width();
     const int dh = after.height() - before.height();
@@ -1096,9 +1274,11 @@ void DisplaysWindow::apply()
             m_running = false;
             if (code != 0) {
                 const QString why = err.trimmed().section(QLatin1Char('\n'), 0, 0);
+                const QString who = Surface::wayland() ? QStringLiteral("Hyprland")
+                                                       : QStringLiteral("xrandr");
                 m_error = why.isEmpty()
-                              ? QStringLiteral("xrandr refused this layout")
-                              : QStringLiteral("xrandr: ") + why;
+                              ? who + QStringLiteral(" refused this layout")
+                              : who + QStringLiteral(": ") + why;
                 revert();
                 return;
             }
@@ -1181,6 +1361,18 @@ DisplaySettings::DisplaySettings(QObject *parent) : QObject(parent)
 
     m_lastKey = Displays::key(Displays::query());
 
+    if (Surface::wayland()) {
+        /* Hyprland reports monitors coming and going, and a reload that
+         * put its own monitor rules back. */
+        WmState *wm = WmState::instance();
+        connect(wm, &WmState::outputsChanged, this, &DisplaySettings::randrEvent);
+        connect(wm, &WmState::configReloaded, this, &DisplaySettings::outputsReset);
+        /* There is no .xinitrc to have applied it: the saved layout for
+         * these outputs, now. */
+        outputsReset();
+        return;
+    }
+
     xcb_connection_t *c = conn();
     if (!c)
         return;
@@ -1204,6 +1396,12 @@ void DisplaySettings::randrEvent()
     m_settle.start();
 }
 
+void DisplaySettings::outputsReset()
+{
+    m_forceApply = true;
+    m_settle.start();
+}
+
 /* The connected set changed: apply what was saved for the new one. The
  * layout's own changes also land here, but leave the key as it was. */
 void DisplaySettings::settle()
@@ -1213,7 +1411,9 @@ void DisplaySettings::settle()
     if (m_win)
         m_win->outputsSettled();
     const QString key = Displays::key(Displays::query());
-    if (key == m_lastKey)
+    const bool force = m_forceApply;
+    m_forceApply = false;
+    if (key == m_lastKey && !force)
         return;
     m_lastKey = key;
     if (m_win && m_win->busy())

@@ -1,21 +1,26 @@
 /* Display settings: output layout (on/off, resolution, refresh, rotation,
- * position, primary, TearFree where the driver has it) and digital vibrance,
+ * position, primary, TearFree where the driver has it; under Hyprland scale
+ * and adaptive sync instead of primary and TearFree) and digital vibrance,
  * in a centred popup.
  *
  *     fanshell-qs-shell ipc call outputs toggle|show|hide
  *
- * State is read straight from RandR over xcb. Changes are made through
- * scripts/fanshell-qs-outputs, the one place that turns a layout into an
- * xrandr command: the popup writes the edited layout to a file in
+ * State is read straight from RandR over xcb, or from Hyprland's `monitors
+ * all`. Changes are made through scripts/fanshell-qs-outputs, the one place
+ * that turns a layout into an xrandr command (or Hyprland monitor rules): the popup writes the edited layout to a file in
  * $XDG_RUNTIME_DIR and has the script apply it. A change is a trial until
  * kept -- it reverts by itself after a countdown, so a mode the monitor
  * cannot show cannot leave you stuck. Keeping it has the script merge it into
  * ~/.config/fanshell-qs/outputs.conf, under the key for the set of outputs
- * connected now; .xinitrc applies that at login.
+ * connected now; .xinitrc applies that at login, and the shell itself under
+ * Hyprland, where output names differ (DP-1, not DisplayPort-0) and so do
+ * the saved sections.
  *
- * DisplaySettings also watches RandR: when the set of connected outputs
- * changes (a monitor plugged in or removed), it applies the layout saved for
- * the new set, if there is one. */
+ * DisplaySettings also watches RandR, or Hyprland's monitor events: when
+ * the set of connected outputs changes (a monitor plugged in or removed),
+ * it applies the layout saved for the new set, if there is one. Hyprland
+ * also puts its own monitor rules back on a config reload, so the saved
+ * layout is applied again then. */
 #ifndef FANSHELL_QS_DISPLAYS_H
 #define FANSHELL_QS_DISPLAYS_H
 
@@ -50,14 +55,19 @@ struct Output {
     /* Largest resolution first, then fastest refresh. */
     QVector<Mode> modes;
     Mode preferred;
+    /* Hyprland: the output's scale, and adaptive sync -- off|on|fullscreen,
+     * or empty where it cannot be set (X11). */
+    double scale = 1.0;
+    QString vrr;
 
     bool sideways() const
     {
         return rotate == QLatin1String("left")
                || rotate == QLatin1String("right");
     }
-    int width() const { return sideways() ? h : w; }
-    int height() const { return sideways() ? w : h; }
+    /* In layout coordinates, which a scale divides. */
+    int width() const { return qRound((sideways() ? h : w) / scale); }
+    int height() const { return qRound((sideways() ? w : h) / scale); }
     QRect rect() const { return QRect(x, y, width(), height()); }
 };
 
@@ -89,8 +99,12 @@ public:
                      std::function<void(int, const QString &)> done);
     void saveLayout(const QVector<Displays::Output> &outputs);
 
-    /* Called for every RandR event Qt receives. */
+    /* Called for every RandR event Qt receives, and Hyprland monitor
+     * event. */
     void randrEvent();
+    /* The window manager put its own output config back (Hyprland's
+     * reload): apply the saved layout again even for the same outputs. */
+    void outputsReset();
 
 private:
     explicit DisplaySettings(QObject *parent = nullptr);
@@ -100,6 +114,7 @@ private:
     DisplaysWindow *m_win = nullptr;
     QTimer m_settle;
     QString m_lastKey;
+    bool m_forceApply = false;
 };
 
 /* Screen blanking and DPMS, set over xcb (core screen saver + the DPMS

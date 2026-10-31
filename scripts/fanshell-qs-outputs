@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# fanshell-qs-outputs — saved output layouts, applied with xrandr.
+# fanshell-qs-outputs — saved output layouts, applied with xrandr, or with
+# Hyprland's monitor rules under Hyprland.
 #
 #   fanshell-qs-outputs apply [FILE]   apply the layout saved for the outputs
 #                                     connected now (from FILE if given)
@@ -17,7 +18,10 @@
 #
 # `mode=auto` means the output's preferred mode; a bare `off` disables it.
 # `tearfree=off|on|auto` sets the driver's TearFree property; without it the
-# output keeps whatever it has.
+# output keeps whatever it has. Under Hyprland, `scale=S` (default 1) and
+# `vrr=off|on|fullscreen` (adaptive sync) apply too, and `primary` and
+# tearfree are ignored; its output names (DP-1) differ from xrandr's
+# (DisplayPort-0), so the sections do too.
 # outputs.conf in ~/.config/fanshell-qs is written by the shell's Displays
 # popup; outputs.defaults.conf beside it (linked from the repo) is consulted
 # when outputs.conf has nothing for the current key.
@@ -30,10 +34,67 @@ dir="${XDG_CONFIG_HOME:-$HOME/.config}/fanshell-qs"
 conf="$dir/outputs.conf"
 defaults="$dir/outputs.defaults.conf"
 
-query=$(xrandr --query)
+hyprland=0
+if [[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] && command -v hyprctl >/dev/null 2>&1; then
+    hyprland=1
+fi
+
+query=
+xrandr_query() {
+    [[ -n $query ]] || query=$(xrandr --query)
+}
 
 current_key() {
+    if ((hyprland)); then
+        hyprctl -j monitors all | jq -r '.[].name' | LC_ALL=C sort | paste -sd+ -
+        return
+    fi
+    xrandr_query
     awk '$2 == "connected" { print $1 }' <<< "$query" | LC_ALL=C sort | paste -sd+ -
+}
+
+# One Hyprland monitor rule, NAME then the words of its layout line. The Lua
+# config (Hyprland 0.56) takes it as hl.monitor{...} through `hyprctl eval`;
+# an older Hyprland only as `hyprctl keyword monitor`. Prints Hyprland's
+# complaint and fails when neither takes it.
+hypr_monitor() {
+    local name=$1 rest=$2 word mode=preferred pos=auto scale=1 transform=0 vrr=
+    if [[ $rest == off ]]; then
+        hypr_try "hl.monitor({ output = \"$name\", disabled = true })" "$name,disable"
+        return
+    fi
+    local rate=
+    for word in $rest; do
+        case $word in
+        mode=auto) mode=preferred ;;
+        mode=*) mode=${word#mode=} ;;
+        rate=*) rate=${word#rate=} ;;
+        pos=*) pos=${word#pos=} ;;
+        scale=*) scale=${word#scale=} ;;
+        rotate=left) transform=1 ;;
+        rotate=inverted) transform=2 ;;
+        rotate=right) transform=3 ;;
+        vrr=off) vrr=0 ;;
+        vrr=on) vrr=1 ;;
+        vrr=fullscreen) vrr=2 ;;
+        esac
+    done
+    [[ $mode == preferred || -z $rate ]] || mode="$mode@$rate"
+    local lua="hl.monitor({ output = \"$name\", mode = \"$mode\", position = \"$pos\", scale = \"$scale\", transform = $transform"
+    local classic="$name,$mode,$pos,$scale,transform,$transform"
+    if [[ -n $vrr ]]; then
+        lua+=", vrr = $vrr"
+        classic+=",vrr,$vrr"
+    fi
+    hypr_try "$lua })" "$classic"
+}
+
+hypr_try() {
+    local reply
+    reply=$(hyprctl eval "$1" 2>&1) && [[ $reply == ok ]] && return 0
+    reply=$(hyprctl keyword monitor "$2" 2>&1) && [[ $reply == ok ]] && return 0
+    printf '%s: %s\n' "${2%%,*}" "$reply" >&2
+    return 1
 }
 
 # Print the body lines of section $2 in file $1; status 1 when it is absent.
@@ -61,6 +122,16 @@ apply() {
         [[ -n $lines ]] || exit 0
     fi
 
+    if ((hyprland)); then
+        local name rest status=0
+        while read -r name rest; do
+            [[ -n $name ]] || continue
+            hypr_monitor "$name" "$rest" || status=1
+        done <<< "$lines"
+        exit "$status"
+    fi
+
+    xrandr_query
     local -a args=()
     local name rest word
     while read -r name rest; do
