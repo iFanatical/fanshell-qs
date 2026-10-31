@@ -1,14 +1,22 @@
 #include "clipboard.h"
 
+#include <QBuffer>
 #include <QClipboard>
 #include <QGuiApplication>
 #include <QHBoxLayout>
+#include <QImage>
 #include <QMimeData>
+#include <QProcess>
+#include <QStandardPaths>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QVBoxLayout>
 
+#include <csignal>
 #include <functional>
+
+#include "procutil.h"
+#include "surface.h"
 
 static QString glyph(char32_t c)
 {
@@ -16,6 +24,51 @@ static QString glyph(char32_t c)
 }
 
 /* ------------------------------------------------------------ ClipboardState */
+
+namespace {
+
+/* wl-copy reads the payload from stdin, then forks a server to hold the
+ * selection, so it outlives this QProcess by design. */
+void wlCopy(const QByteArray &data, const QString &type)
+{
+    auto *proc = new QProcess(qApp);
+    proc->setProgram(QStringLiteral("wl-copy"));
+    if (!type.isEmpty())
+        proc->setArguments({QStringLiteral("--type"), type});
+    proc->setChildProcessModifier([]() {
+        signal(SIGCHLD, SIG_DFL);
+        signal(SIGINT, SIG_DFL);
+        signal(SIGQUIT, SIG_DFL);
+    });
+    QObject::connect(proc, &QProcess::finished, proc, &QObject::deleteLater);
+    QObject::connect(proc, &QProcess::errorOccurred, proc, &QObject::deleteLater);
+    proc->start();
+    proc->write(data);
+    proc->closeWriteChannel();
+}
+
+} /* namespace */
+
+void Clipboard::copyText(const QString &text)
+{
+    if (Surface::wayland())
+        wlCopy(text.toUtf8(), QString());
+    else
+        QGuiApplication::clipboard()->setText(text, QClipboard::Clipboard);
+}
+
+void Clipboard::copyImage(const QImage &image)
+{
+    if (!Surface::wayland()) {
+        QGuiApplication::clipboard()->setImage(image);
+        return;
+    }
+    QByteArray png;
+    QBuffer buffer(&png);
+    buffer.open(QIODevice::WriteOnly);
+    image.save(&buffer, "PNG");
+    wlCopy(png, QStringLiteral("image/png"));
+}
 
 ClipboardState *ClipboardState::instance()
 {
@@ -25,8 +78,33 @@ ClipboardState *ClipboardState::instance()
 
 ClipboardState::ClipboardState(QObject *parent) : QObject(parent)
 {
-    connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this,
-            &ClipboardState::onClipboardChanged);
+    if (!Surface::wayland()) {
+        connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this,
+                &ClipboardState::onClipboardChanged);
+        return;
+    }
+    available = !QStandardPaths::findExecutable(QStringLiteral("wl-paste")).isEmpty();
+    if (!available)
+        return;
+    /* `--type text` lets wl-paste pick whichever text flavour the source
+     * offers. --watch runs the command once per new selection with the
+     * content on its stdin; the NUL marks the end, as wl-paste puts no
+     * delimiter between them. Secrets a password manager tags with
+     * x-kde-passwordManagerHint are drained and dropped. */
+    m_watch = new BlockWatchProcess(
+        {QStringLiteral("wl-paste"), QStringLiteral("--type"),
+         QStringLiteral("text"), QStringLiteral("--watch"),
+         QStringLiteral("sh"), QStringLiteral("-c"),
+         QStringLiteral("if wl-paste --list-types 2>/dev/null"
+                        " | grep -qx x-kde-passwordManagerHint; then"
+                        " cat >/dev/null; else cat; printf '\\000'; fi")},
+        QByteArray(1, '\0'), this);
+    connect(m_watch, &BlockWatchProcess::block, this,
+            [this](const QString &text) {
+                if (!text.isEmpty())
+                    addEntry(text);
+            });
+    m_watch->start();
 }
 
 void ClipboardState::onClipboardChanged()
@@ -61,7 +139,7 @@ void ClipboardState::selectEntry(int index)
 {
     if (index < 0 || index >= history.size())
         return;
-    QGuiApplication::clipboard()->setText(history[index], QClipboard::Clipboard);
+    Clipboard::copyText(history[index]);
 }
 
 void ClipboardState::removeEntry(int index)

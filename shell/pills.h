@@ -30,10 +30,10 @@ private:
     bool m_hasFixedTint = false;
 };
 
-/* The layout of this panel's monitor ("tiling", "monocle", ...), in the slot
- * fanhypr-qs uses for the keybind submap, which X11 window managers have no
- * equivalent of. Clicking cycles to the next layout on that monitor, where
- * the backend supports it. */
+/* The layout of this panel's monitor ("tiling", "monocle", ...). Clicking
+ * cycles to the next layout on that monitor, where the backend supports it.
+ * Hidden where the window manager reports none (Hyprland, whose slot is the
+ * submap's). */
 class LayoutWidget : public BarPill {
     Q_OBJECT
 public:
@@ -43,6 +43,18 @@ private:
     void sync();
 
     QPointer<QScreen> m_screen;
+};
+
+/* The active keybind submap, where the window manager has them (Hyprland).
+ * Shows "global" in the default one, accented while a submap is active;
+ * clicking leaves it. */
+class SubmapWidget : public BarPill {
+    Q_OBJECT
+public:
+    explicit SubmapWidget(QWidget *parent = nullptr);
+
+private:
+    void sync();
 };
 
 /* Sequential WireGuard tunnel state (fanshell-qs-vpn). vpn.tunnels in

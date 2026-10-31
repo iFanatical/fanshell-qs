@@ -1,10 +1,11 @@
-/* Shell surfaces on X11 -- the X11 counterpart of fanhypr-qs's wlutil.
+/* Shell surfaces, on Wayland and X11.
  *
- * fanhypr-qs describes every top-level it owns (bar, popups, scrim, toasts,
- * OSD, launcher) as a wlr-layer-shell surface: a layer, the screen edges it
- * is anchored to, margins from those edges, an exclusive zone, and how it
- * takes the keyboard. This keeps that vocabulary so the widgets read the same
- * in both trees, and maps it onto X11:
+ * Every top-level the shell owns (bar, popups, scrim, toasts, OSD,
+ * launcher) is described as a wlr-layer-shell surface: a layer, the screen
+ * edges it is anchored to, margins from those edges, an exclusive zone, and
+ * how it takes the keyboard. On Wayland (Hyprland) that is exactly what it
+ * becomes, through LayerShellQt. On X11 the same vocabulary is mapped onto
+ * EWMH:
  *
  *   exclusiveZone > 0   a _NET_WM_WINDOW_TYPE_DOCK window with a matching
  *                       _NET_WM_STRUT_PARTIAL. The window manager maps docks
@@ -77,7 +78,12 @@ struct SurfaceSpec {
     QString scope = QStringLiteral("fanshell-qs");
 };
 
-/* True on the xcb platform; everything below is a no-op otherwise. */
+/* Which platform the shell runs on: X11 (xcb), or Wayland, where every
+ * surface is a wlr-layer-shell surface through LayerShellQt (only in a build
+ * with FANSHELL_QS_HAVE_WAYLAND). active() is either; everything below is a
+ * no-op on any other platform. */
+bool x11();
+bool wayland();
 bool active();
 
 /* Make `w` a shell surface on `screen`. Call before the widget is first

@@ -11,6 +11,11 @@
 
 #include <cstdlib>
 
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+#include <QWindow>
+#include <LayerShellQt/Window>
+#endif
+
 /* Everything here talks to the X server through xcb on Qt's own connection.
  * Xlib on Qt's Display would also work, but an Xlib error (focusing a window
  * that just died, say) goes to Xlib's default handler, which exits the
@@ -168,6 +173,10 @@ void applyGeometry(QWidget *w)
           height);
 
     it->origin = QPoint(x, y) - full.topLeft();
+    /* On Wayland the compositor places it, where layer shell says; only
+     * the origin is ours to remember (see screenPos()). */
+    if (Surface::wayland())
+        return;
     w->move(x, y);
     w->resize(width, height);
 
@@ -391,14 +400,121 @@ ShowWatcher *watcher()
     return w;
 }
 
+
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+/* ---------------------------------------------------------------- Wayland
+ *
+ * Every surface is a wlr-layer-shell surface, through LayerShellQt
+ * (kde-plasma/layer-shell-qt), which gives a QWindow the layer-surface role
+ * before QtWayland binds it as an xdg_toplevel. The spec maps one to one:
+ * the compositor reserves exclusive zones, stacks by layer, and hands out
+ * keyboard focus on request, so none of the X11 machinery above runs. */
+
+using LsWindow = LayerShellQt::Window;
+
+LsWindow::Anchors toAnchors(int a)
+{
+    LsWindow::Anchors out;
+    if (a & Surface::AnchorTop)
+        out |= LsWindow::AnchorTop;
+    if (a & Surface::AnchorBottom)
+        out |= LsWindow::AnchorBottom;
+    if (a & Surface::AnchorLeft)
+        out |= LsWindow::AnchorLeft;
+    if (a & Surface::AnchorRight)
+        out |= LsWindow::AnchorRight;
+    return out;
+}
+
+LsWindow::Layer toLayer(Surface::Layer l)
+{
+    switch (l) {
+    case Surface::Layer::Background:
+        return LsWindow::LayerBackground;
+    case Surface::Layer::Bottom:
+        return LsWindow::LayerBottom;
+    case Surface::Layer::Overlay:
+        return LsWindow::LayerOverlay;
+    case Surface::Layer::Top:
+        break;
+    }
+    return LsWindow::LayerTop;
+}
+
+LsWindow::KeyboardInteractivity toKeyboard(Surface::Keyboard k)
+{
+    switch (k) {
+    case Surface::Keyboard::Exclusive:
+        return LsWindow::KeyboardInteractivityExclusive;
+    case Surface::Keyboard::OnDemand:
+        return LsWindow::KeyboardInteractivityOnDemand;
+    case Surface::Keyboard::None:
+        break;
+    }
+    return LsWindow::KeyboardInteractivityNone;
+}
+
+LsWindow *layerOf(QWidget *w)
+{
+    QWindow *h = w ? w->windowHandle() : nullptr;
+    return h ? LsWindow::get(h) : nullptr;
+}
+
+void wlConfigure(QWidget *w, QScreen *screen, const Surface::SurfaceSpec &spec)
+{
+    /* The output is chosen before the native window exists: a change after
+     * the surface is bound is not renegotiated. */
+    if (screen)
+        w->setScreen(screen);
+    w->winId(); /* QtWayland binds the role on first show, not here */
+    QWindow *h = w->windowHandle();
+    if (!h)
+        return;
+    if (screen)
+        h->setScreen(screen);
+    LsWindow *ls = LsWindow::get(h);
+    if (!ls)
+        return;
+    if (screen)
+        ls->setScreen(screen);
+    ls->setScope(spec.scope);
+    ls->setLayer(toLayer(spec.layer));
+    ls->setAnchors(toAnchors(spec.anchors));
+    ls->setMargins(spec.margins);
+    if (!spec.desiredSize.isNull())
+        ls->setDesiredSize(spec.desiredSize);
+    ls->setExclusiveZone(spec.exclusiveZone);
+    ls->setKeyboardInteractivity(toKeyboard(spec.keyboard));
+    ls->setActivateOnShow(spec.activateOnShow);
+    /* The shell drives visibility itself; a compositor-side dismissal must
+     * not destroy the widget. */
+    ls->setCloseOnDismissed(false);
+}
+#endif
+
 } /* namespace */
 
 namespace Surface {
 
-bool active()
+bool x11()
 {
     return QGuiApplication::platformName() == QLatin1String("xcb")
            && conn() != nullptr;
+}
+
+bool wayland()
+{
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    return QGuiApplication::platformName().startsWith(QLatin1String("wayland"),
+                                                      Qt::CaseInsensitive);
+#else
+    return false;
+#endif
+}
+
+bool active()
+{
+    return x11() || wayland();
 }
 
 void configure(QWidget *w, QScreen *screen, const SurfaceSpec &spec)
@@ -413,10 +529,18 @@ void configure(QWidget *w, QScreen *screen, const SurfaceSpec &spec)
     if (firstTime) {
         QObject::connect(w, &QObject::destroyed, qApp,
                          [w]() { g_entries.remove(w); });
-        w->installEventFilter(watcher());
+        if (x11())
+            w->installEventFilter(watcher());
     }
 
-    if (!active()) {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (wayland()) {
+        wlConfigure(w, screen, spec);
+        applyGeometry(w);
+        return;
+    }
+#endif
+    if (!x11()) {
         applyGeometry(w);
         return;
     }
@@ -457,6 +581,11 @@ void setMargins(QWidget *w, const QMargins &m)
     if (it == g_entries.end())
         return;
     it->spec.margins = m;
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (wayland())
+        if (LsWindow *ls = layerOf(w))
+            ls->setMargins(m);
+#endif
     applyGeometry(w);
 }
 
@@ -466,6 +595,11 @@ void setDesiredSize(QWidget *w, const QSize &size)
     if (it == g_entries.end())
         return;
     it->spec.desiredSize = size;
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (wayland())
+        if (LsWindow *ls = layerOf(w))
+            ls->setDesiredSize(size);
+#endif
     applyGeometry(w);
 }
 
@@ -476,7 +610,14 @@ void setKeyboard(QWidget *w, Keyboard k)
         return;
     const Keyboard old = it->spec.keyboard;
     it->spec.keyboard = k;
-    if (!w->isVisible())
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (wayland()) {
+        if (LsWindow *ls = layerOf(w))
+            ls->setKeyboardInteractivity(toKeyboard(k));
+        return;
+    }
+#endif
+    if (!w->isVisible() || !x11())
         return;
     if (old == Keyboard::Exclusive && it->grabbed) {
         xcb_ungrab_keyboard(conn(), XCB_CURRENT_TIME);
@@ -494,6 +635,10 @@ QPoint screenPos(const QWidget *w, const QPoint &rel)
         return rel;
     const QWidget *top = w->window();
     const QPoint inTop = w->mapTo(top, rel);
+    /* On Wayland the origin follows the surface's current size (a popup
+     * anchored right grows leftwards), so it is worked out again. */
+    if (wayland() && g_entries.contains(top))
+        applyGeometry(const_cast<QWidget *>(top));
     const auto it = g_entries.constFind(top);
     if (it != g_entries.constEnd())
         return inTop + it->origin;

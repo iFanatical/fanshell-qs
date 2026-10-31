@@ -6,12 +6,17 @@
 
 #include <xcb/xcb.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <cstring>
 
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+#include "hyprstate.h"
+#endif
 #include "oxwmstate.h"
 #include "qtileipc.h"
 #include "qtilestate.h"
+#include "surface.h"
 
 namespace {
 
@@ -28,7 +33,7 @@ bool sameMonitors(const QVector<WmState::Monitor> &a,
                 || x.selected != y.selected || x.elsewhere != y.elsewhere
                 || x.occupied != y.occupied || x.urgent != y.urgent
                 || x.layout != y.layout || x.title != y.title
-                || x.fullscreen != y.fullscreen)
+                || x.fullscreen != y.fullscreen || x.labels != y.labels)
             return false;
     }
     return true;
@@ -50,6 +55,7 @@ QString ewmhName()
 {
     auto *x11 = qGuiApp->nativeInterface<QNativeInterface::QX11Application>();
     xcb_connection_t *c = x11 ? x11->connection() : nullptr;
+    /* On XWayland (a Wayland session) this is no window manager's. */
     if (!c)
         return QString();
     const xcb_window_t root = xcb_setup_roots_iterator(xcb_get_setup(c)).data->root;
@@ -87,6 +93,15 @@ WmState *createBackend()
 {
     const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     QString wm = env.value(QStringLiteral("FANSHELL_QS_WM"));
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* Hyprland sets its signature in the environment of everything it
+     * starts, and the shell only runs on Wayland under Hyprland. */
+    if (wm.isEmpty() && (Surface::wayland()
+                         || env.contains(QStringLiteral("HYPRLAND_INSTANCE_SIGNATURE"))))
+        wm = QStringLiteral("hyprland");
+    if (wm.compare(QLatin1String("hyprland"), Qt::CaseInsensitive) == 0)
+        return new HyprState();
+#endif
     if (wm.isEmpty())
         wm = ewmhName();
     if (wm.isEmpty())
@@ -167,6 +182,31 @@ void WmState::toggleWorkspace(int, int) {}
 
 void WmState::cycleLayout(int) {}
 
+void WmState::resetSubmap() {}
+
+bool WmState::focusedFullscreen() const
+{
+    const Monitor *m = monitorByName(focusedMonitor());
+    return m && m->fullscreen;
+}
+
+/* X window managers don't track PIDs, so read _NET_WM_PID off each window
+ * they manage. Only an unambiguous match is focused. */
+bool WmState::focusPid(uint pid)
+{
+    if (!pid)
+        return false;
+    quintptr window = 0;
+    int matches = 0;
+    for (quintptr xid : windows()) {
+        if (Surface::windowPid(xid) != pid)
+            continue;
+        window = xid;
+        matches++;
+    }
+    return matches == 1 && focusWindow(window);
+}
+
 void WmState::scheduleRefresh()
 {
     if (!m_coalesce.isActive())
@@ -213,6 +253,12 @@ void WmState::nameMonitors(QVector<Monitor> &mons) const
 {
     const QList<QScreen *> screens = QGuiApplication::screens();
     for (Monitor &m : mons) {
+        /* A backend that knows the outputs by name already (Hyprland, whose
+         * names are the ones Qt's Wayland screens carry) keeps them. */
+        if (!m.name.isEmpty()
+                && std::any_of(screens.begin(), screens.end(),
+                               [&m](const QScreen *s) { return s->name() == m.name; }))
+            continue;
         const QRect want(m.x, m.y, m.w, m.h);
         const QScreen *match = nullptr;
         for (const QScreen *s : screens) {

@@ -1,4 +1,4 @@
-# fanshell-qs-shell — hand-rolled C++/Qt bar for oxwm and qtile.
+# fanshell-qs-shell — hand-rolled C++/Qt bar for oxwm, qtile and Hyprland.
 #
 # Needs qtbase (widgets, gui, dbus, network) with the xcb platform plugin,
 # libxcb (with RandR, DPMS and the screen saver extension, for displays,
@@ -13,6 +13,19 @@
 # Gentoo:  emerge dev-qt/qtbase media-libs/libpulse x11-libs/libxcb \
 #                 x11-libs/libX11 x11-libs/libXcomposite x11-libs/libXdamage \
 #                 x11-libs/libXfixes x11-libs/libxkbfile sys-libs/pam
+#
+# Hyprland (Wayland) support is built when layer-shell-qt and
+# wayland-client are found, and left out otherwise; WAYLAND=0 leaves it out
+# anyway. It also needs qtwayland at run time, xkbcommon, and the
+# wayland-protocols and hyprland-protocols XML, turned into C by
+# wayland-scanner:
+#
+# Fedora:  dnf install layer-shell-qt-devel qt6-qtwayland-devel \
+#                 wayland-devel wayland-protocols-devel libxkbcommon-devel \
+#                 hyprland-protocols-devel
+# Gentoo:  emerge kde-plasma/layer-shell-qt dev-qt/qtwayland \
+#                 dev-libs/wayland dev-libs/wayland-protocols \
+#                 x11-libs/libxkbcommon dev-libs/hyprland-protocols
 
 QTMODS   = Qt6Widgets Qt6Gui Qt6Core Qt6DBus Qt6Network
 PKGS     = $(QTMODS) libpulse xcb xcb-randr xcb-dpms xcb-screensaver xcb-xkb \
@@ -21,6 +34,27 @@ PKGS     = $(QTMODS) libpulse xcb xcb-randr xcb-dpms xcb-screensaver xcb-xkb \
 # XEmbed tray intake. Optional under Wayland in fanhypr-qs; on X11 it is the
 # native tray protocol, so it is always built here.
 override CXXFLAGS += -DFANSHELL_QS_HAVE_XEMBED
+
+# layer-shell-qt ships CMake config files, not a .pc, so it is found by hand.
+# Distros disagree about where the headers land; take the first that exists,
+# and include its *parent* so `#include <LayerShellQt/Window>` resolves.
+LSQT_DIR ?= $(firstword $(wildcard \
+              /usr/include/LayerShellQt \
+              /usr/include/qt6/LayerShellQt \
+              /usr/local/include/LayerShellQt))
+WL_PKGS   = wayland-client xkbcommon
+WAYLAND  ?= $(if $(LSQT_DIR),$(shell pkg-config --exists $(WL_PKGS) && echo 1))
+# The Hyprland backend and the Wayland protocol clients.
+WL_MODULES =
+WL_MOCHDRS =
+ifeq ($(WAYLAND),1)
+PKGS     += $(WL_PKGS)
+override CXXFLAGS += -DFANSHELL_QS_HAVE_WAYLAND \
+                     -I$(patsubst %/,%,$(dir $(LSQT_DIR)))
+override LDLIBS   += -lLayerShellQtInterface
+WL_MODULES = hypripc hyprstate
+WL_MOCHDRS = hypripc hyprstate
+endif
 
 CXX      ?= g++
 MOC      ?= $(shell pkg-config --variable=libexecdir Qt6Core)/moc
@@ -37,18 +71,21 @@ MODULES  = widgets popup surface procutil wmstate oxwmipc oxwmstate qtileipc \
            launcher ipc clipboard system battery wallpaper notification osd \
            hardwarecontrols powerprofiles media menu xembedtray vibrance displays \
            controlpanel keyboard mouse idleinhibit lockscreen nightlight \
-           gamemode status capture
+           gamemode status capture $(WL_MODULES)
 # headers containing Q_OBJECT classes
 MOCHDRS  = widgets popup procutil wmstate oxwmipc oxwmstate qtilestate calendar \
            pills panel \
            network bluetooth volume tray traymenu desktopentry launcher ipc \
            clipboard system battery wallpaper notification osd \
            hardwarecontrols powerprofiles media xembedtray vibrance displays \
-           idleinhibit nightlight gamemode status capture
+           idleinhibit nightlight gamemode status capture $(WL_MOCHDRS)
 
 OBJ      = $(MODULES:%=%.o) main.o $(MOCHDRS:%=moc_%.o)
 
 all: fanshell-qs-shell
+ifneq ($(WAYLAND),1)
+	@echo 'note: built without Hyprland (Wayland) support -- see the top of shell/Makefile'
+endif
 
 fanshell-qs-shell: $(OBJ)
 	$(CXX) -o $@ $(OBJ) $(LDLIBS)

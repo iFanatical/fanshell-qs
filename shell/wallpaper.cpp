@@ -269,6 +269,78 @@ private:
     qreal m_t = 0;
 };
 
+
+} /* namespace */
+
+/* One output's wallpaper on Wayland: a background-layer surface covering
+ * it, beneath every window. A new image fades in over the old one. */
+class WallpaperLayer : public QWidget {
+public:
+    explicit WallpaperLayer(QScreen *screen) : QWidget(nullptr)
+    {
+        setAttribute(Qt::WA_OpaquePaintEvent);
+        setWindowTitle(QStringLiteral("fanshell-qs-wallpaper"));
+        Surface::SurfaceSpec spec;
+        spec.layer = Surface::Layer::Background;
+        spec.anchors = Surface::AnchorTop | Surface::AnchorBottom
+                       | Surface::AnchorLeft | Surface::AnchorRight;
+        spec.exclusiveZone = -1;
+        spec.keyboard = Surface::Keyboard::None;
+        spec.scope = QStringLiteral("fanshell-qs-wallpaper");
+        resize(screen->geometry().size());
+        Surface::configure(this, screen, spec);
+        m_anim.setStartValue(0.0);
+        m_anim.setEndValue(1.0);
+        m_anim.setEasingCurve(QEasingCurve::InOutQuad);
+        QObject::connect(&m_anim, &QVariantAnimation::valueChanged, this,
+                         [this](const QVariant &v) {
+                             m_t = v.toReal();
+                             update();
+                         });
+        QObject::connect(&m_anim, &QVariantAnimation::finished, this, [this]() {
+            m_from = QImage();
+            update();
+        });
+    }
+
+    void setImage(const QImage &image, int fadeMs)
+    {
+        m_anim.stop();
+        m_from = fadeMs > 0 && isVisible() ? m_to : QImage();
+        m_to = image;
+        m_t = m_from.isNull() ? 1.0 : 0.0;
+        if (!isVisible())
+            show();
+        if (!m_from.isNull()) {
+            m_anim.setDuration(fadeMs);
+            m_anim.start();
+        }
+        update();
+    }
+
+protected:
+    void paintEvent(QPaintEvent *) override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.fillRect(rect(), Qt::black);
+        /* Rendered at device pixels; drawn into the logical rect. */
+        if (!m_from.isNull())
+            p.drawImage(rect(), m_from);
+        if (!m_to.isNull()) {
+            p.setOpacity(m_t);
+            p.drawImage(rect(), m_to);
+        }
+    }
+
+private:
+    QImage m_from;
+    QImage m_to;
+    qreal m_t = 1.0;
+    QVariantAnimation m_anim;
+};
+
+namespace {
 } /* namespace */
 
 /* ------------------------------------------------------------- Wallpapers */
@@ -617,8 +689,81 @@ bool WallpaperPicker::isCurrent(const QString &path) const
     return false;
 }
 
+void WallpaperPicker::drawLayers(const Wallpapers::Config &conf, bool fade,
+                                 bool save)
+{
+    struct Out {
+        QScreen *screen;
+        QString name;
+        QSize size; /* device pixels */
+    };
+    QVector<Out> outs;
+    for (QScreen *s : QGuiApplication::screens())
+        outs.push_back({s, s->name(),
+                        (QSizeF(s->geometry().size()) * s->devicePixelRatio())
+                            .toSize()});
+    /* Outputs that went away take their surface with them. */
+    for (auto it = m_layers.begin(); it != m_layers.end();) {
+        const bool gone = std::none_of(outs.begin(), outs.end(),
+                                       [&it](const Out &o) { return o.screen == it.key(); });
+        if (gone) {
+            it.value()->deleteLater();
+            it = m_layers.erase(it);
+        } else {
+            ++it;
+        }
+    }
+    if (outs.isEmpty())
+        return;
+
+    const int generation = ++m_generation;
+    auto images = std::make_shared<QHash<QString, QImage>>();
+    auto failed = std::make_shared<QString>();
+    QThread *thread = QThread::create([conf, outs, images, failed]() {
+        for (const Out &o : outs) {
+            const Wallpapers::Choice choice = conf.forOutput(o.name);
+            if (choice.path.isEmpty())
+                continue;
+            const QImage img = Wallpapers::render(choice.path, choice.mode, o.size);
+            if (img.isNull()) {
+                *failed = choice.path;
+                return;
+            }
+            images->insert(o.name, img);
+        }
+    });
+    connect(thread, &QThread::finished, this,
+            [this, thread, conf, fade, save, generation, images, failed, outs]() {
+        thread->deleteLater();
+        if (generation != m_generation)
+            return;
+        if (!failed->isEmpty()) {
+            qWarning("fanshell-qs: cannot read wallpaper %s", qPrintable(*failed));
+            return;
+        }
+        m_conf = conf;
+        if (save)
+            m_conf.save();
+        emit changed();
+        const int ms = fade ? WallpaperFade::duration() : 0;
+        for (const Out &o : outs) {
+            if (!QGuiApplication::screens().contains(o.screen))
+                continue;
+            WallpaperLayer *&layer = m_layers[o.screen];
+            if (!layer)
+                layer = new WallpaperLayer(o.screen);
+            layer->setImage(images->value(o.name), ms);
+        }
+    });
+    thread->start();
+}
+
 void WallpaperPicker::draw(const Wallpapers::Config &conf, bool fade, bool save)
 {
+    if (Surface::wayland()) {
+        drawLayers(conf, fade, save);
+        return;
+    }
     xcb_connection_t *c = conn();
     if (!c)
         return;

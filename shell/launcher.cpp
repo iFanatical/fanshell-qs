@@ -1,5 +1,7 @@
 #include "launcher.h"
 
+#include "clipboard.h"
+
 #include <QApplication>
 #include <QClipboard>
 #include <QGuiApplication>
@@ -200,7 +202,7 @@ void AppLauncher::launchSelected()
         } else if (it.isEmoji) {
             /* The shell owns the selection from here on, for as long as it
              * runs. */
-            QGuiApplication::clipboard()->setText(it.cmd, QClipboard::Clipboard);
+            Clipboard::copyText(it.cmd);
         } else if (!it.cmd.isEmpty()) {
             auto *proc = new QProcess;
             proc->setProgram(it.cmd);

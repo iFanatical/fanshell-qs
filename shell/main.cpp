@@ -1,4 +1,4 @@
-/* fanshell-qs-shell: a hand-rolled C++/Qt bar for oxwm and qtile. One
+/* fanshell-qs-shell: a hand-rolled C++/Qt bar for oxwm, qtile and Hyprland. One
  * process runs the per-output panels, popups, SNI tray, and launcher.
  *
  *   fanshell-qs-shell [--no-duplicate]        run the shell
@@ -70,10 +70,16 @@ int main(int argc, char *argv[])
 
     if (!Surface::active())
         fprintf(stderr,
-                "fanshell-qs-shell: platform is '%s', not xcb — the bar "
+                "fanshell-qs-shell: platform is '%s', not xcb%s — the bar "
                 "will come up as an ordinary window with no reserved strip. "
-                "Force it with QT_QPA_PLATFORM=xcb.\n",
-                qPrintable(QGuiApplication::platformName()));
+                "Force it with QT_QPA_PLATFORM=xcb%s.\n",
+                qPrintable(QGuiApplication::platformName()),
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+                " or wayland", " (or wayland, with qtwayland installed)"
+#else
+                " (a build without Wayland support)", ""
+#endif
+                );
     WmState *state = WmState::instance();
     if (const QString hint = state->unavailableHint(); !hint.isEmpty())
         fprintf(stderr,

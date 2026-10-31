@@ -14,7 +14,14 @@ lock() {
 logout() {
 	# The window manager's own quit: the same clean shutdown path as its
 	# quit keybind, so the session ends with whatever follows it in
-	# .xinitrc. Only the one that is running answers.
+	# .xinitrc. Only the one that is running answers. Hyprland 0.56 takes
+	# its dispatchers as Lua; an older one only the classic spelling.
+	if [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && command -v hyprctl >/dev/null 2>&1; then
+		if [ "$(hyprctl dispatch 'hl.dsp.exit()' 2>&1)" = ok ] \
+				|| [ "$(hyprctl dispatch exit 2>&1)" = ok ]; then
+			exit 0
+		fi
+	fi
 	if command -v oxwmctl >/dev/null 2>&1 && oxwmctl dispatch quit >/dev/null 2>&1; then
 		exit 0
 	fi

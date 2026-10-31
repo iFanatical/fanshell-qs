@@ -20,6 +20,15 @@ if command -v fanshell-qs-shell >/dev/null 2>&1; then
 	[ "$status" -eq 2 ] || exit "$status"
 fi
 
+# Wayland: an X locker would lock only XWayland.
+if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+	if command -v hyprlock >/dev/null 2>&1; then
+		hyprlock &
+		exit 0
+	fi
+	exec loginctl lock-session
+fi
+
 if command -v i3lock >/dev/null 2>&1; then
 	exec i3lock --ignore-empty-password --show-failed-attempts --color 1a1b26
 fi

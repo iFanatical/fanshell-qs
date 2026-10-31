@@ -4,10 +4,11 @@
  * panels.
  *
  * On X11 this is plain QClipboard: Qt hears about every change of selection
- * owner through XFixes, whichever window made the copy -- fanhypr-qs needs
- * `wl-paste --watch` only because Wayland withholds that from unfocused
- * clients. Restoring an entry makes the shell itself the selection owner,
- * which it stays for as long as it runs. */
+ * owner through XFixes, whichever window made the copy, and restoring an
+ * entry makes the shell itself the selection owner for as long as it runs.
+ * Wayland withholds the selection from unfocused clients, so there it is
+ * `wl-paste --watch` (wl-clipboard), and copies go through wl-copy, which
+ * forks a server of its own to hold the selection. */
 #ifndef FANSHELL_QS_CLIPBOARD_H
 #define FANSHELL_QS_CLIPBOARD_H
 
@@ -18,6 +19,16 @@
 #include "procutil.h"
 #include "widgets.h"
 
+class BlockWatchProcess;
+class QImage;
+
+/* Put text or an image (as PNG) on the CLIPBOARD selection: wl-copy on
+ * Wayland, QClipboard on X11. */
+namespace Clipboard {
+void copyText(const QString &text);
+void copyImage(const QImage &image);
+} /* namespace Clipboard */
+
 class ClipboardState : public QObject {
     Q_OBJECT
 public:
@@ -25,8 +36,7 @@ public:
 
     static constexpr int maxHistory = 50;
     QVector<QString> history; /* most recent first */
-    /* Always true on X11; kept so the widget code matches fanhypr-qs, where
-     * it hides without wl-clipboard. */
+    /* False on Wayland without wl-clipboard: the widget hides. */
     bool available = true;
 
     void selectEntry(int index);
@@ -40,6 +50,8 @@ private:
     explicit ClipboardState(QObject *parent = nullptr);
     void addEntry(const QString &text);
     void onClipboardChanged();
+
+    BlockWatchProcess *m_watch = nullptr;
 };
 
 class ClipboardPopup;

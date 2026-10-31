@@ -1,5 +1,7 @@
 #include "capture.h"
 
+#include "clipboard.h"
+
 #include <QClipboard>
 #include <QCursor>
 #include <QDateTime>
@@ -339,7 +341,7 @@ void Capture::finishPick(const QPoint &global)
                                                       : QColor(Qt::black);
     close();
     const QString hex = c.name();
-    QGuiApplication::clipboard()->setText(hex);
+    Clipboard::copyText(hex);
     QImage swatch(64, 64, QImage::Format_RGB32);
     swatch.fill(c);
     const QString path = runtimeFile(QStringLiteral("fanshell-qs-colour.png"));
@@ -368,7 +370,7 @@ void Capture::finishShot(const QRect &global)
         notify(QStringLiteral("Cannot save the screenshot"), path, QString());
         return;
     }
-    QGuiApplication::clipboard()->setImage(shot);
+    Clipboard::copyImage(shot);
     notify(QStringLiteral("Screenshot saved"),
            QStringLiteral("%1, copied to the clipboard").arg(name), path);
 }

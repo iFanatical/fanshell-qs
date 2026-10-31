@@ -981,20 +981,7 @@ bool NotificationService::focusCertainSender(const Notification &n)
 {
     if (!n.senderPid)
         return false;
-    /* Window managers don't track PIDs, so read _NET_WM_PID off each window
-     * it manages. Only an unambiguous match is focused. */
-    WmState *wm = WmState::instance();
-    quintptr window = 0;
-    int matches = 0;
-    for (quintptr xid : wm->windows()) {
-        if (Surface::windowPid(xid) != n.senderPid)
-            continue;
-        window = xid;
-        matches++;
-    }
-    if (matches != 1)
-        return false;
-    return wm->focusWindow(window);
+    return WmState::instance()->focusPid(n.senderPid);
 }
 
 void NotificationService::setHovered(uint id)

@@ -175,6 +175,7 @@ Panel::Panel(WmState *state, QScreen *screen)
     rightRow->addWidget(new ModesWidget(m_rightBox), 0, Qt::AlignVCenter);
     rightRow->addWidget(new DiskWidget(m_rightBox), 0, Qt::AlignVCenter);
     rightRow->addWidget(new LayoutWidget(screen, m_rightBox), 0, Qt::AlignVCenter);
+    rightRow->addWidget(new SubmapWidget(m_rightBox), 0, Qt::AlignVCenter);
     rightRow->addWidget(new NetworkWidget(m_rightBox), 0, Qt::AlignVCenter);
     /* Battery groups with the other status pills rather than sitting past the
      * tray, so the run of shell-owned indicators stays unbroken. Hidden
@@ -306,7 +307,9 @@ QString Panel::shortenTitle(const QString &t)
 void Panel::syncFromState()
 {
     const WmState::Monitor *m = mon();
-    const QStringList tags = m_state->workspaceNames;
+    /* Hyprland's outputs each label their own block of workspaces. */
+    const QStringList tags = m && !m->labels.isEmpty() ? m->labels
+                                                       : m_state->workspaceNames;
 
     /* Rebuild only when the tag set changes (a config reload); otherwise the
      * row is fixed and we just restyle it. */

@@ -86,7 +86,30 @@ void LayoutWidget::sync()
         m_screen ? WmState::instance()->monitorByName(m_screen->name())
                  : nullptr;
     setLabel(m ? m->layout : QString());
-    setVisible(m != nullptr);
+    setVisible(m != nullptr && !m->layout.isEmpty());
+}
+
+/* ------------------------------------------------------------ SubmapWidget */
+
+SubmapWidget::SubmapWidget(QWidget *parent) : BarPill(parent)
+{
+    setIcon(QStringLiteral("\U000F030C")); /* mdi keyboard */
+    connect(this, &BarPill::clicked, this,
+            []() { WmState::instance()->resetSubmap(); });
+    connect(WmState::instance(), &WmState::changed, this, &SubmapWidget::sync);
+    sync();
+}
+
+void SubmapWidget::sync()
+{
+    WmState *state = WmState::instance();
+    const QString name = state->submap;
+    const bool active = !name.isEmpty();
+    setLabel(active ? name : QStringLiteral("global"));
+    /* Accented so a modal keybind mode is hard to miss; muted otherwise. */
+    setTint(active ? Theme::accent : Theme::textMuted);
+    setActive(active);
+    setVisible(state->features().submaps);
 }
 
 /* ---------------------------------------------------------------- VpnState */

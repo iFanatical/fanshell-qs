@@ -28,6 +28,11 @@
  * wallpaper.fade=off turns it off and wallpaper.fade_ms sets its length
  * (default 500).
  *
+ * On Wayland (Hyprland) there is no root window: each output gets a surface
+ * of its own on the background layer, which shows its image and cross-fades
+ * to the next one itself, so no wallpaper daemon (awww, hyprpaper) is
+ * needed -- or wanted, as it would draw over or under this one.
+ *
  * The directory is scanned NON-recursively on purpose -- a `backup/` subtree
  * of old wallpapers lives under it that has no business in the picker. */
 #ifndef FANSHELL_QS_WALLPAPER_H
@@ -76,6 +81,8 @@ struct Wallpaper {
 
 class WallpaperWindow;
 class WallpaperFade;
+class WallpaperLayer;
+class QScreen;
 
 class WallpaperPicker : public QObject {
     Q_OBJECT
@@ -131,6 +138,8 @@ private:
      * wallpaper.conf when `save`). Left as it was if an image cannot be
      * read. */
     void draw(const Wallpapers::Config &conf, bool fade, bool save);
+    /* draw() on Wayland: an image per output, into its background layer. */
+    void drawLayers(const Wallpapers::Config &conf, bool fade, bool save);
 
     /* Decodes one pending thumbnail per event-loop turn. Decoding all of them
      * at once costs a few hundred ms even with scaled reads, which would be a
@@ -142,6 +151,8 @@ private:
     Wallpapers::Config m_conf;
     WallpaperWindow *m_win;
     WallpaperFade *m_fade;
+    /* Wayland: each output's background surface. */
+    QHash<QScreen *, WallpaperLayer *> m_layers;
     QTimer m_decoder;
     /* Outputs added, removed or moved: draw again once RandR settles. */
     QTimer m_outputsChanged;

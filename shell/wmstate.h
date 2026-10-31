@@ -44,6 +44,10 @@ public:
         /* A window on what this monitor shows is fullscreen: the panel
          * hides, as i3's bar does. */
         bool fullscreen = false;
+        /* Labels for this monitor's own workspaces, when they differ per
+         * monitor (Hyprland's blocks: 1-5 on one output, 6-10 on the next);
+         * empty to use workspaceNames. */
+        QStringList labels;
     };
 
     /* What the backend can do, so the UI offers only that. */
@@ -51,6 +55,8 @@ public:
         /* View several workspaces at once (dwm tags); right-click toggles. */
         bool toggleWorkspaces = false;
         bool cycleLayout = false;
+        /* Keybind submaps (Hyprland): the bar shows the active one. */
+        bool submaps = false;
     };
 
     /* The shared instance, for the window manager that is running. */
@@ -59,6 +65,8 @@ public:
     QVector<Monitor> monitors;
     QStringList workspaceNames;
     bool connected = false;
+    /* The active keybind submap; empty in the default one. */
+    QString submap;
 
     virtual QString wmName() const = 0;
     virtual Features features() const = 0;
@@ -80,6 +88,10 @@ public:
     virtual void viewWorkspace(int monitorId, int index) = 0;
     virtual void toggleWorkspace(int monitorId, int index);
     virtual void cycleLayout(int monitorId);
+    /* Leave the active submap. */
+    virtual void resetSubmap();
+    /* Whether the focused monitor shows a fullscreen window. */
+    bool focusedFullscreen() const;
 
     /* The window manager reports a change through the shell's own control
      * socket (`fanshell-qs-shell ipc call wm changed`), for one with no
@@ -89,6 +101,9 @@ public:
     /* X window ids of the managed windows, and focusing one of them. */
     virtual QVector<quintptr> windows() = 0;
     virtual bool focusWindow(quintptr window) = 0;
+    /* Focus the window of process `pid` (a notification's sender), when it
+     * has exactly one. By default found through windows()' _NET_WM_PID. */
+    virtual bool focusPid(uint pid);
 
 signals:
     void changed();
