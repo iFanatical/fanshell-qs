@@ -24,6 +24,12 @@
 #include "paths.h"
 #include "surface.h"
 #include "theme.h"
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+#include <QJsonObject>
+#include <QProcess>
+
+#include "hypripc.h"
+#endif
 
 namespace {
 
@@ -72,6 +78,45 @@ QImage grabScreen()
     }
     free(img);
     return out;
+}
+
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+/* Wayland: every output as the compositor composes it, from grim (which
+ * Hyprland's screencopy serves), laid out in logical coordinates from
+ * `origin`, the top-left of all the outputs -- which can be negative. */
+QImage grabWayland(QPoint *origin)
+{
+    QRect all;
+    for (const QScreen *s : QGuiApplication::screens())
+        all |= s->geometry();
+    QProcess grim;
+    grim.start(QStringLiteral("grim"), {QStringLiteral("-t"), QStringLiteral("ppm"),
+                                        QStringLiteral("-")});
+    if (!grim.waitForFinished(5000) || grim.exitCode() != 0)
+        return QImage();
+    QImage img = QImage::fromData(grim.readAllStandardOutput(), "PPM");
+    if (img.isNull() || all.isEmpty())
+        return QImage();
+    /* grim draws at the largest output scale; the overlay works in
+     * logical pixels. */
+    if (img.size() != all.size())
+        img = img.scaled(all.size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    *origin = all.topLeft();
+    return img.convertToFormat(QImage::Format_RGB32);
+}
+#endif
+
+/* Where the pointer is: Qt knows on X11; on Wayland only the compositor. */
+QPoint pointerPos()
+{
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland()) {
+        const QJsonObject o = HyprIpc::requestJson("cursorpos").object();
+        return QPoint(o.value(QStringLiteral("x")).toInt(),
+                      o.value(QStringLiteral("y")).toInt());
+    }
+#endif
+    return QCursor::pos();
 }
 
 QScreen *screenAt(const QPoint &global)
@@ -136,7 +181,8 @@ protected:
         QPainter p(this);
         const QRect here(m_origin, size());
         p.setCompositionMode(QPainter::CompositionMode_Source);
-        p.drawImage(QPoint(0, 0), m_capture->m_frozen, here);
+        p.drawImage(QPoint(0, 0), m_capture->m_frozen,
+                    here.translated(-m_capture->m_frozenOrigin));
         p.setCompositionMode(QPainter::CompositionMode_SourceOver);
         if (m_capture->m_kind == Capture::Kind::Pick)
             paintLoupe(p);
@@ -149,16 +195,16 @@ protected:
         if (e->button() == Qt::RightButton)
             m_capture->cancel();
         else if (e->button() == Qt::LeftButton)
-            m_capture->pressed(e->globalPosition().toPoint());
+            m_capture->pressed(m_origin + e->position().toPoint());
     }
     void mouseMoveEvent(QMouseEvent *e) override
     {
-        m_capture->moved(e->globalPosition().toPoint());
+        m_capture->moved(m_origin + e->position().toPoint());
     }
     void mouseReleaseEvent(QMouseEvent *e) override
     {
         if (e->button() == Qt::LeftButton)
-            m_capture->released(e->globalPosition().toPoint());
+            m_capture->released(m_origin + e->position().toPoint());
     }
     void keyPressEvent(QKeyEvent *e) override
     {
@@ -214,7 +260,7 @@ private:
         p.setClipRect(zoom);
         for (int dy = -loupeRadius; dy <= loupeRadius; dy++)
             for (int dx = -loupeRadius; dx <= loupeRadius; dx++) {
-                const QPoint src = at + QPoint(dx, dy);
+                const QPoint src = at + QPoint(dx, dy) - m_capture->m_frozenOrigin;
                 const QColor c = img.rect().contains(src) ? img.pixelColor(src) : Qt::black;
                 p.fillRect(zoom.x() + (dx + loupeRadius) * loupeZoom,
                            zoom.y() + (dy + loupeRadius) * loupeZoom, loupeZoom, loupeZoom,
@@ -228,7 +274,8 @@ private:
         p.setPen(QPen(Qt::black, 1));
         p.drawRect(centre.adjusted(-1, -1, 0, 0));
 
-        const QColor c = img.rect().contains(at) ? img.pixelColor(at) : Qt::black;
+        const QPoint here = at - m_capture->m_frozenOrigin;
+        const QColor c = img.rect().contains(here) ? img.pixelColor(here) : Qt::black;
         const QRect info(box.x(), zoom.bottom() + 5, side, 22);
         p.fillRect(QRect(info.x(), info.y() + 3, 16, 16), c);
         p.setPen(Theme::textStrong);
@@ -253,17 +300,23 @@ void Capture::begin(Kind kind)
 {
     if (!m_windows.isEmpty())
         return;
-    m_frozen = grabScreen();
+    m_frozenOrigin = QPoint(0, 0);
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland())
+        m_frozen = grabWayland(&m_frozenOrigin);
+    else
+#endif
+        m_frozen = grabScreen();
     if (m_frozen.isNull()) {
         notify(QStringLiteral("Cannot capture the screen"), QString(), QString());
         return;
     }
     m_kind = kind;
-    m_pointer = QCursor::pos();
+    m_pointer = pointerPos();
     m_dragging = false;
 
     if (kind == Kind::Screen) {
-        finishShot(m_frozen.rect());
+        finishShot(QRect(m_frozenOrigin, m_frozen.size()));
         return;
     }
     if (kind == Kind::Output) {
@@ -337,7 +390,8 @@ void Capture::close()
 
 void Capture::finishPick(const QPoint &global)
 {
-    const QColor c = m_frozen.rect().contains(global) ? m_frozen.pixelColor(global)
+    const QPoint at = global - m_frozenOrigin;
+    const QColor c = m_frozen.rect().contains(at) ? m_frozen.pixelColor(at)
                                                       : QColor(Qt::black);
     close();
     const QString hex = c.name();
@@ -353,7 +407,8 @@ void Capture::finishPick(const QPoint &global)
 
 void Capture::finishShot(const QRect &global)
 {
-    const QImage shot = m_frozen.copy(global & m_frozen.rect());
+    const QImage shot = m_frozen.copy(
+        (global & QRect(m_frozenOrigin, m_frozen.size())).translated(-m_frozenOrigin));
     close();
     if (shot.isNull())
         return;

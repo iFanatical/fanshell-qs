@@ -16,6 +16,9 @@
  *   output   the output under the pointer, at once.
  *   screen   every output, at once.
  *
+ * Under Hyprland the copy comes from grim (screencopy), and the overlay is
+ * a layer surface per output.
+ *
  * A screenshot is saved as a PNG in screenshot.dir (shell.conf; default
  * ~/Pictures/screenshots), copied to the clipboard, and announced with a
  * thumbnail. */
@@ -58,6 +61,9 @@ private:
 
     Kind m_kind = Kind::Pick;
     QImage m_frozen;
+    /* Where m_frozen's top-left pixel is on the desktop (Hyprland can put
+     * outputs left of or above 0,0). */
+    QPoint m_frozenOrigin;
     QVector<CaptureWindow *> m_windows;
     QPoint m_pointer;
     QPoint m_anchor;
