@@ -72,6 +72,9 @@ inline constexpr int popupSpacing        = 10;
 inline constexpr int radius              = 4;
 inline constexpr int smallRadius         = 3;
 inline constexpr int workspaceButtonSize = 22;
+/* Workspaces are bubbles: a dot each, stretched to a pill for the one shown. */
+inline constexpr int workspaceBubbleSize  = 12;
+inline constexpr int workspaceBubbleWidth = 30;
 inline constexpr int trayItemSize        = 24;
 inline constexpr int trayIconSize        = 18;
 inline constexpr int pillHeight          = 22;

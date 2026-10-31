@@ -8,6 +8,7 @@
 
 #include <QPointer>
 #include <QScreen>
+#include <QVariantAnimation>
 #include <QWidget>
 
 #include "wmstate.h"
@@ -35,12 +36,18 @@ protected:
     void mouseReleaseEvent(QMouseEvent *) override;
 
 private:
+    qreal bubbleWidth() const;
+
     QString m_label;
     bool m_selected = false;
     bool m_occupied = false;
     bool m_urgent = false;
     bool m_hover = false;
     Qt::MouseButton m_pressed = Qt::NoButton;
+    /* 0 a dot, 1 the shown workspace's pill; animated between them. */
+    qreal m_grow = 0;
+    bool m_placed = false;
+    QVariantAnimation m_anim;
 };
 
 class Panel : public QWidget {

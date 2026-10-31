@@ -6,6 +6,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QTimer>
+#include <QtMath>
 
 #include "battery.h"
 #include "calendar.h"
@@ -22,9 +23,21 @@
 WorkspaceButton::WorkspaceButton(const QString &label, QWidget *parent)
     : QWidget(parent), m_label(label)
 {
-    setFixedSize(Theme::workspaceButtonSize, Theme::workspaceButtonSize);
+    setFixedSize(qCeil(bubbleWidth()) + 6, Theme::workspaceButtonSize);
+    setToolTip(m_label);
     setCursor(Qt::PointingHandCursor);
     setMouseTracking(true);
+
+    /* Switching workspaces shrinks the old pill to a dot as the new dot
+     * grows into one; the row reflows with them each frame. */
+    m_anim.setDuration(220);
+    m_anim.setEasingCurve(QEasingCurve::OutCubic);
+    connect(&m_anim, &QVariantAnimation::valueChanged, this,
+            [this](const QVariant &v) {
+                m_grow = v.toDouble();
+                setFixedWidth(qCeil(bubbleWidth()) + 6);
+                update();
+            });
 }
 
 void WorkspaceButton::setLabel(const QString &l)
@@ -32,34 +45,59 @@ void WorkspaceButton::setLabel(const QString &l)
     if (m_label == l)
         return;
     m_label = l;
-    update();
+    setToolTip(m_label);
 }
 
 void WorkspaceButton::setStates(bool selected, bool occupied, bool urgent)
 {
-    if (m_selected == selected && m_occupied == occupied && m_urgent == urgent)
+    if (m_selected == selected && m_occupied == occupied && m_urgent == urgent) {
+        m_placed = true;
         return;
+    }
+    const bool switched = m_selected != selected;
     m_selected = selected;
     m_occupied = occupied;
     m_urgent = urgent;
+    /* The bar's first state is drawn as it is, not grown into. */
+    if (switched && m_placed) {
+        m_anim.stop();
+        m_anim.setStartValue(m_grow);
+        m_anim.setEndValue(selected ? 1.0 : 0.0);
+        m_anim.start();
+    } else if (!m_placed) {
+        m_grow = selected ? 1.0 : 0.0;
+        setFixedWidth(qCeil(bubbleWidth()) + 6);
+    }
+    m_placed = true;
     update();
+}
+
+/* The button is the bubble plus 3px either side, so the gaps click too. */
+qreal WorkspaceButton::bubbleWidth() const
+{
+    return Theme::workspaceBubbleSize
+           + (Theme::workspaceBubbleWidth - Theme::workspaceBubbleSize) * m_grow;
 }
 
 void WorkspaceButton::paintEvent(QPaintEvent *)
 {
     QPainter p(this);
-    const QColor fill = m_selected
-                            ? Theme::surface
-                            : (m_hover ? Theme::surfaceHover
-                                       : Theme::transparent);
-    Theme::paintRect(p, rect(), fill, Theme::smallRadius);
+    p.setRenderHint(QPainter::Antialiasing, true);
     /* urgent = red, active = purple/pink, has windows = white, empty = gray */
-    p.setFont(Theme::font(Theme::panelFontSize,
-                          m_selected || m_occupied || m_urgent));
-    p.setPen(m_urgent ? Theme::urgent
-             : m_selected ? Theme::tagActive
-                          : (m_occupied ? Theme::tagOccupied : Theme::tagEmpty));
-    p.drawText(rect(), Qt::AlignCenter, m_label);
+    const QColor rest = m_occupied ? Theme::tagOccupied : Theme::tagEmpty;
+    QColor fill = rest;
+    if (m_urgent)
+        fill = Theme::urgent;
+    else if (m_grow > 0) /* fades to the accent as it grows */
+        fill.setRgbF(rest.redF() + (Theme::tagActive.redF() - rest.redF()) * m_grow,
+                     rest.greenF() + (Theme::tagActive.greenF() - rest.greenF()) * m_grow,
+                     rest.blueF() + (Theme::tagActive.blueF() - rest.blueF()) * m_grow);
+    if (m_hover)
+        fill = fill.lighter(140);
+    const int d = Theme::workspaceBubbleSize;
+    const QRectF bubble(QPointF((width() - bubbleWidth()) / 2.0, (height() - d) / 2.0),
+                        QSizeF(bubbleWidth(), d));
+    Theme::paintRect(p, bubble, fill, d / 2.0);
 }
 
 void WorkspaceButton::enterEvent(QEnterEvent *)
@@ -114,7 +152,7 @@ Panel::Panel(WmState *state, QScreen *screen)
     m_wsBox = new QWidget(m_leftBox);
     m_wsLayout = new QHBoxLayout(m_wsBox);
     m_wsLayout->setContentsMargins(0, 0, 0, 0);
-    m_wsLayout->setSpacing(Theme::rowSpacing);
+    m_wsLayout->setSpacing(Theme::compactSpacing);
     leftRow->addWidget(m_wsBox, 0, Qt::AlignVCenter);
 
     /* Focused window title, elided, fills the middle gap */
