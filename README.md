@@ -1,12 +1,14 @@
 # fanshell-qs
 
-The hand-rolled C++/Qt bar and desktop shell for X11, shared by two
-sessions:
+The hand-rolled C++/Qt bar and desktop shell for X11 and Hyprland, shared
+by three sessions:
 
 - [fanoxwm-qs](https://github.com/iFanatical/fanoxwm-qs): oxwm, with the
   IPC patch the shell talks to, and its Lua config.
 - [fanqtile-qs](https://github.com/iFanatical/fanqtile-qs): qtile and its
   config.
+- [fanhypr-qs](https://github.com/iFanatical/fanhypr-qs): Hyprland and its
+  Lua config (see [Hyprland](#hyprland)).
 
 One binary (`fanshell-qs-shell`) draws the panel, the popups, the
 StatusNotifierItem and XEmbed tray, notifications, OSDs, the launcher, the
@@ -139,9 +141,11 @@ title, and a few actions. A backend fills it in:
 |---|---|---|
 | `oxwmstate.*` | the patched oxwm from fanoxwm-qs, over its IPC sockets | complete |
 | `qtilestate.*`, `qtileipc.*` | qtile, over its own IPC socket; hooks in its config send `wm changed` (fanqtile-qs does this) | complete |
+| `hyprstate.*`, `hypripc.*` | Hyprland, over its two IPC sockets (Wayland) | complete; see [Hyprland](#hyprland) |
 
 At startup the shell picks the backend for the window manager that is
-running: `$FANSHELL_QS_WM` if set, else the name the window manager gives
+running: `$FANSHELL_QS_WM` if set, else Hyprland on Wayland (or with
+`$HYPRLAND_INSTANCE_SIGNATURE` set), else the name the window manager gives
 EWMH clients (`_NET_WM_NAME` on its `_NET_SUPPORTING_WM_CHECK` window), else
 `$XDG_CURRENT_DESKTOP`, else qtile when its IPC socket for this display
 exists (qtile's stock config calls itself `LG3D`), else oxwm. A few other
@@ -599,33 +603,35 @@ Screenshots are saved as PNGs in `screenshot.dir` (default
 `~/Pictures/screenshots`), copied to the clipboard, and announced with a
 thumbnail.
 
-## Bringing over fanhypr-qs changes
+## Hyprland
 
-The shell is a port, not a fork with shared history. Most files differ from
-fanhypr-qs only by the `fanhypr` → `fanshell` rename, so a change there usually
-applies directly:
+The shell picks its platform at run time. Under Hyprland it is a Wayland
+client, and the build includes that side when layer-shell-qt and
+wayland-client are found (`WAYLAND=0` leaves it out, `WAYLAND=1` makes it
+required; see the top of `shell/Makefile`). Every feature works there; what
+does it differs:
 
-```sh
-git -C ../fanhypr-qs diff 9ea1f08..HEAD -- shell scripts \
-  | sed 's/fanhypr/fanshell/g; s/FANHYPR/FANSHELL/g' \
-  | git apply --reject
-```
+| feature | X11 | Hyprland |
+|---|---|---|
+| panel, popups, toasts (`surface.*`) | EWMH docks, override-redirect windows | wlr-layer-shell surfaces (LayerShellQt) |
+| window manager (`wmstate.*`) | `oxwmstate`, `qtilestate` | `hyprstate`: a fixed block of workspaces per output from the workspace rules, and the submap pill |
+| clipboard | `QClipboard` | `wl-paste --watch`, `wl-copy` |
+| wallpaper | the root window's pixmap | a background-layer surface per output |
+| Displays | RandR, xrandr | `monitors all`, monitor rules (`fanshell-qs-outputs`); scale and adaptive sync, no primary or TearFree |
+| vibrance, night light | RandR CTM, gamma ramps | one screen shader (`screenshader.*`), as hyprvibrance does |
+| lock screen | X windows, grabs | ext-session-lock-v1 (`sessionlock.*`) |
+| idle, screen power | X screen saver, DPMS | ext-idle-notify-v1, wlr-output-power-management (`wlclient.*`) |
+| Keyboard, Mouse & touchpad | XKB, XInput properties | `input:` and `hl.device` options |
+| screenshots, picker | the root window | grim |
 
-These files are X11 rewrites, and changes to their fanhypr-qs
-counterparts need porting by hand:
+Config changes go through `eval hl.config{...}` under Hyprland 0.56's Lua
+config, and `keyword` under hyprlang (`hypripc.*` probes which). Hyprland
+puts its own config back on a reload, and the shell re-applies its output
+layout, input settings and shader then. Not tested on hardware yet: the
+Lua forms `hl.monitor{disabled = true}`, `vrr` and `hl.device` merging
+with a device's rules in `hyprland.lua`.
 
-| fanhypr-qs | fanshell-qs |
-|---|---|
-| `hypripc.*` | `oxwmipc.*` |
-| `hyprstate.*` | `wmstate.*` (the window-manager-neutral model every widget uses), with `oxwmstate.*` and `qtilestate.*` as its backends |
-| `wlutil.*` | `surface.*` |
-| `clipboard.cpp` (`wl-paste`) | `clipboard.cpp` (`QClipboard`) |
-| `wallpaper.cpp` (`awww`) | `wallpaper.cpp` (draws the root background itself) |
-| `panel.cpp` workspaces, `pills.*` submap | tags, layout pill |
-
-Update the commit in this README when you do.
-
-## Configuration
+## Configuration## Configuration
 
 Everything visual lives in `shell/theme.h`. Settings live in
 `~/.config/fanshell-qs/shell.conf`, a hand-edited `KEY=VALUE` file (`#`
