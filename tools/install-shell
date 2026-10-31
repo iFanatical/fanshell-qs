@@ -3,7 +3,7 @@
 #
 #     tools/install-shell [--dry-run]
 #
-# The window-manager repos' install.sh (fanoxwm-qs, fanqtile-qs) call this
+# The session repos' install.sh (fanoxwm-qs, fanqtile-qs, fanhypr-qs) call this
 # as their last step; it also works on its own after a `git pull` here. Run
 # it as yourself: the build and the $HOME links stay yours, and only the
 # install into /usr/local and the removal of old files use sudo.

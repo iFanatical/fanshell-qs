@@ -64,7 +64,9 @@ need() {
 _have() {
     case $1 in
     pc:*) pkg-config --exists "${1#pc:}" 2>/dev/null ;;
-    h:*) printf '#include <%s>\n' "${1#h:}" | ${CXX:-g++} -E -x c++ - >/dev/null 2>&1 ;;
+    # Qt's include path too, for headers that include Qt's (LayerShellQt).
+    h:*) printf '#include <%s>\n' "${1#h:}" |
+        ${CXX:-g++} -E -x c++ $(pkg-config --cflags Qt6Gui 2>/dev/null) - >/dev/null 2>&1 ;;
     /*) [ -e "$1" ] ;;
     *) command -v "$1" >/dev/null 2>&1 ;;
     esac
@@ -109,6 +111,30 @@ need_shell() {
     [ -d /run/systemd/system ] ||
         need dbus-run-session dbus-daemon sys-apps/dbus dbus "a session bus of its own"
     need gsettings glib2 dev-libs/glib glib2 "GTK theme, icons, font and colour scheme"
+}
+
+# Queues what the shell needs besides under Hyprland (Wayland): building its
+# Wayland side, which the build leaves out without these, and the programs
+# it runs there. The Hyprland session's install.sh queues it after
+# need_shell, and builds with WAYLAND=1 so a missing one fails the build
+# instead of leaving Hyprland support out.
+need_shell_wayland() {
+    need h:LayerShellQt/Window layer-shell-qt-devel kde-plasma/layer-shell-qt layer-shell-qt \
+        "the panel and popups as layer-shell surfaces"
+    need pc:wayland-client wayland-devel dev-libs/wayland wayland "the lock screen and idle"
+    need pc:wayland-cursor wayland-devel dev-libs/wayland wayland "the lock screen's cursor"
+    need wayland-scanner wayland-devel dev-util/wayland-scanner wayland "building the shell"
+    need pc:wayland-protocols wayland-protocols-devel dev-libs/wayland-protocols \
+        wayland-protocols "the lock screen and idle (ext-session-lock, ext-idle-notify)"
+    need pc:xkbcommon libxkbcommon-devel x11-libs/libxkbcommon libxkbcommon \
+        "the lock screen's keyboard"
+    # Part of qtbase since Qt 6.10 (USE=wayland on Gentoo), qtwayland before.
+    qt_plugins=$(pkg-config --variable=libdir Qt6Core 2>/dev/null)/qt6/plugins
+    need "$qt_plugins/platforms/libqwayland.so" qt6-qtwayland "dev-qt/qtbase[wayland]" \
+        qt6-wayland "Qt's Wayland platform plugin"
+    need wl-paste wl-clipboard gui-apps/wl-clipboard wl-clipboard "clipboard history"
+    need grim grim gui-apps/grim grim "screenshots and the colour picker"
+    need jq jq app-misc/jq jq "the Displays popup's saved layouts"
 }
 
 # Sets _missing to the need() lines whose CHECK fails.
