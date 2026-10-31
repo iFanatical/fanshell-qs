@@ -18,7 +18,12 @@
  *
  * A keyboard plugged in later starts with the server's defaults, so the
  * repeat rate and the options are applied again when one is added. Saved
- * in ~/.config/fanshell-qs/keyboard.conf. */
+ * in ~/.config/fanshell-qs/keyboard.conf.
+ *
+ * Under Hyprland the same settings are its input options, set at run time
+ * (input:numlock_by_default, repeat_delay, repeat_rate, kb_options) and set
+ * again after a config reload; the lock OSD follows the keyboard LEDs, and
+ * the backlight an idle notification (wlclient.h). */
 #ifndef FANSHELL_QS_KEYBOARD_H
 #define FANSHELL_QS_KEYBOARD_H
 
@@ -27,6 +32,10 @@
 #include <QTimer>
 
 class KeyboardWindow;
+
+namespace Wl {
+class IdleWatch;
+}
 
 class KeyboardSettings : public QObject {
 public:
@@ -69,6 +78,11 @@ private:
     unsigned int m_locked = 0;      /* the last locked modifiers seen */
     qint64 m_quietUntil = 0;        /* no lock OSD for the shell's own changes */
     QTimer m_hotplug;               /* collapses a burst of hierarchy events */
+
+    /* Wayland: the lock LEDs, polled for the lock OSD, and the idle
+     * notification that switches the backlight off. */
+    QTimer m_ledPoll;
+    Wl::IdleWatch *m_backlightIdle = nullptr;
 
     QTimer m_backlightTimer;
     int m_backlightRestore = -1;    /* the level to restore; -1 = not off */

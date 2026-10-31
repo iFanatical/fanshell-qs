@@ -22,7 +22,14 @@
  *
  * Both are KEY=VALUE lines with the key SETTING:NAME, e.g.
  * `speed:Logitech G Pro=-0.50`. A setting in neither keeps the driver's
- * default. */
+ * default.
+ *
+ * Under Hyprland the devices are its own (`hyprctl devices`), named its way
+ * ("logitech-g-pro--1"), so mouse.conf keeps separate lines for them; a
+ * defaults pattern matches either spelling. Settings are hl.device rules,
+ * set at run time and again after a config reload; Hyprland cannot report
+ * a device's own settings, so the popup shows what the shell set, else the
+ * input: option every device gets. */
 #ifndef FANSHELL_QS_MOUSE_H
 #define FANSHELL_QS_MOUSE_H
 

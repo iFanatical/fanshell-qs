@@ -14,7 +14,15 @@
 
 #include "overlay.h"
 #include "paths.h"
+#include "surface.h"
 #include "widgets.h"
+#include "wmstate.h"
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+#include <QJsonArray>
+#include <QJsonObject>
+
+#include "hypripc.h"
+#endif
 
 namespace {
 
@@ -259,6 +267,80 @@ public:
 private:
     int m_xinput;
 };
+
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+/* ------------------------------------------------------------ Hyprland
+ *
+ * Hyprland's per-device config: hl.device({ name = ..., ... }), keyed on
+ * its own device names (lowercase, dashes: "logitech-g-pro--1"). It cannot
+ * be read back, so what a device is set to is what the shell set, else
+ * what hyprland.lua sets for every device (input:*). */
+
+struct HyprKey {
+    const char *key;      /* ours */
+    const char *device;   /* hl.device's */
+    const char *global;   /* the input: option it defaults to */
+    bool touchpadOnly;
+};
+
+const HyprKey hyprKeys[] = {
+    {"speed", "sensitivity", "input:sensitivity", false},
+    {"accel", "accel_profile", "input:accel_profile", false},
+    {"natural", "natural_scroll", "input:natural_scroll", false},
+    {"left_handed", "left_handed", "input:left_handed", false},
+    {"tap", "tap-to-click", "input:touchpad:tap-to-click", true},
+    {"dwt", "disable_while_typing", "input:touchpad:disable_while_typing", true},
+    {"scroll", "scroll_method", "input:scroll_method", true},
+};
+
+const HyprKey *hyprKey(const QString &key)
+{
+    for (const HyprKey &k : hyprKeys)
+        if (key == QLatin1String(k.key))
+            return &k;
+    return nullptr;
+}
+
+/* Our value for a Hyprland one, and back. */
+QString fromHypr(const HyprKey &k, const QVariant &v)
+{
+    const QString key = QLatin1String(k.key);
+    if (key == QLatin1String("speed"))
+        return QString::number(qRound(v.toDouble() * 100) / 100.0, 'f', 2);
+    if (key == QLatin1String("accel")) {
+        const QString a = v.toString();
+        return a.isEmpty() ? QStringLiteral("adaptive") : a;
+    }
+    if (key == QLatin1String("scroll")) {
+        const QString m = v.toString();
+        return m == QLatin1String("edge") ? QStringLiteral("edge")
+                                          : QStringLiteral("two-finger");
+    }
+    return v.toLongLong() ? QStringLiteral("on") : QStringLiteral("off");
+}
+
+QVariant toHypr(const HyprKey &k, const QString &value)
+{
+    const QString key = QLatin1String(k.key);
+    if (key == QLatin1String("speed"))
+        return qRound(qBound(-1.0, value.toDouble(), 1.0) * 100) / 100.0;
+    if (key == QLatin1String("accel"))
+        return value;
+    if (key == QLatin1String("scroll"))
+        return value == QLatin1String("edge") ? QStringLiteral("edge") : QStringLiteral("2fg");
+    return value == QLatin1String("on");
+}
+
+#endif
+
+/* "Logitech G Pro" and "logitech-g-pro--1" are the same mouse to a
+ * mouse.defaults.conf pattern. */
+QString normalName(QString name)
+{
+    name = name.toLower();
+    name.replace(QLatin1Char(' '), QLatin1Char('-'));
+    return name;
+}
 
 QString choiceLabel(const QString &value)
 {
@@ -564,6 +646,11 @@ MouseSettings::MouseSettings(QObject *parent) : QObject(parent)
         if (xi && xi->present)
             qApp->installNativeEventFilter(new MouseFilter(xi->major_opcode));
     }
+    /* Hyprland keeps a device's settings by name, for when it comes back,
+     * until a reload puts hyprland.lua's back. */
+    if (Surface::wayland())
+        connect(WmState::instance(), &WmState::configReloaded, this,
+                &MouseSettings::applyAll);
     applyAll();
 }
 
@@ -608,6 +695,26 @@ void MouseSettings::save()
 QVector<MouseSettings::Device> MouseSettings::devices() const
 {
     QVector<Device> out;
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland()) {
+        const QJsonObject all = HyprIpc::requestJson("devices").object();
+        for (const QJsonValue &v : all.value(QStringLiteral("mice")).toArray()) {
+            const QString name = v.toObject().value(QStringLiteral("name")).toString();
+            if (name.isEmpty() || name.contains(QLatin1String("virtual"))
+                    || std::any_of(out.begin(), out.end(),
+                                   [&name](const Device &d) { return d.name == name; }))
+                continue;
+            /* Hyprland does not say which are touchpads; their names do. */
+            const bool touchpad = name.contains(QLatin1String("touchpad"))
+                                  || name.contains(QLatin1String("trackpad"));
+            out << Device{name, {}, touchpad};
+        }
+        std::sort(out.begin(), out.end(), [](const Device &a, const Device &b) {
+            return a.name < b.name;
+        });
+        return out;
+    }
+#endif
     xcb_connection_t *c = connection();
     const xcb_atom_t speed = atom("libinput Accel Speed");
     const xcb_atom_t tapping = atom("libinput Tapping Enabled");
@@ -654,12 +761,28 @@ QVector<MouseSettings::Device> MouseSettings::devices() const
 
 bool MouseSettings::has(const Device &d, const QString &key) const
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland()) {
+        const HyprKey *k = hyprKey(key);
+        return k && (!k->touchpadOnly || d.touchpad);
+    }
+#endif
     const Prop *p = findProp(key);
     return p && !d.ids.isEmpty() && deviceHas(d.ids.first(), atom(p->xprop));
 }
 
 QString MouseSettings::current(const Device &d, const QString &key) const
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland()) {
+        const HyprKey *k = hyprKey(key);
+        if (!k || !has(d, key))
+            return QString();
+        const QString set = wanted(d.name, key);
+        return set.isEmpty() ? fromHypr(*k, HyprIpc::optionValue(QLatin1String(k->global)))
+                             : set;
+    }
+#endif
     const Prop *p = findProp(key);
     if (!p || d.ids.isEmpty())
         return QString();
@@ -668,6 +791,15 @@ QString MouseSettings::current(const Device &d, const QString &key) const
 
 QStringList MouseSettings::available(const Device &d, const QString &key) const
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland()) {
+        if (key == QLatin1String("accel"))
+            return {QStringLiteral("adaptive"), QStringLiteral("flat")};
+        if (key == QLatin1String("scroll") && d.touchpad)
+            return {QStringLiteral("two-finger"), QStringLiteral("edge")};
+        return {};
+    }
+#endif
     const Prop *p = findProp(key);
     if (!p || p->kind != Kind::OneHot || d.ids.isEmpty() || !p->availableProp)
         return {};
@@ -681,6 +813,16 @@ QStringList MouseSettings::available(const Device &d, const QString &key) const
 
 void MouseSettings::set(const Device &d, const QString &key, const QString &value)
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland()) {
+        if (!hyprKey(key))
+            return;
+        m_saved[d.name].insert(key, value);
+        m_saveTimer.start();
+        apply(d);
+        return;
+    }
+#endif
     const Prop *p = findProp(key);
     if (!p)
         return;
@@ -698,6 +840,22 @@ void MouseSettings::set(const Device &d, const QString &key, const QString &valu
 
 void MouseSettings::reset(const Device &d)
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* Back to what every device gets, then mouse.defaults.conf's. */
+    if (Surface::wayland()) {
+        m_saved.remove(d.name);
+        save();
+        QVector<QPair<QString, QVariant>> settings;
+        for (const HyprKey &k : hyprKeys)
+            if (has(d, QLatin1String(k.key)))
+                settings.push_back(
+                    {QLatin1String(k.device),
+                     toHypr(k, fromHypr(k, HyprIpc::optionValue(QLatin1String(k.global))))});
+        HyprIpc::device(d.name, settings);
+        apply(d);
+        return;
+    }
+#endif
     for (const Prop &p : props()) {
         const xcb_atom_t a = atom(p.xprop);
         const xcb_atom_t def = atom(QByteArray(p.xprop) + " Default");
@@ -720,13 +878,29 @@ QString MouseSettings::wanted(const QString &name, const QString &key) const
     const QString lower = name.toLower();
     QString value;
     for (const Rule &r : m_defaults)
-        if (r.key == key && lower.contains(r.pattern))
+        if (r.key == key
+                && (lower.contains(r.pattern)
+                    || (Surface::wayland() && normalName(name).contains(normalName(r.pattern)))))
             value = r.value;
     return value;
 }
 
 void MouseSettings::apply(const Device &d)
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* Every setting the shell has for the device, in one hl.device call,
+     * so one call never undoes another's. */
+    if (Surface::wayland()) {
+        QVector<QPair<QString, QVariant>> settings;
+        for (const HyprKey &k : hyprKeys) {
+            const QString value = wanted(d.name, QLatin1String(k.key));
+            if (!value.isEmpty() && has(d, QLatin1String(k.key)))
+                settings.push_back({QLatin1String(k.device), toHypr(k, value)});
+        }
+        HyprIpc::device(d.name, settings);
+        return;
+    }
+#endif
     for (const Prop &p : props()) {
         const QString value = wanted(d.name, QLatin1String(p.key));
         if (value.isEmpty())

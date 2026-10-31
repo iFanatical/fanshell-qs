@@ -75,6 +75,11 @@ QString luaValue(const QVariant &v);
 bool setOption(const QString &path, const QVariant &value);
 /* Several at once, applied as one config change. */
 bool setOptions(const QVector<QPair<QString, QVariant>> &options);
+/* One input device's settings by Hyprland's device name, in one call:
+ * hl.device({ name = ..., ["key"] = value, ... }) under Lua, `keyword
+ * device[NAME]:KEY VALUE` for each under hyprlang. */
+bool device(const QString &name, const QVector<QPair<QString, QVariant>> &settings);
+
 /* An option's value (int, float or string); invalid when Hyprland has no
  * such option or is unreachable. */
 QVariant optionValue(const QString &path);

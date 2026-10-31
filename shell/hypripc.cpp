@@ -244,6 +244,29 @@ bool setOptions(const QVector<QPair<QString, QVariant>> &options)
     return ok;
 }
 
+bool device(const QString &name, const QVector<QPair<QString, QVariant>> &settings)
+{
+    if (settings.isEmpty())
+        return true;
+    QByteArray cmd;
+    if (luaConfig()) {
+        QStringList fields{QStringLiteral("name = ") + luaString(name)};
+        for (const auto &kv : settings)
+            fields << QStringLiteral("[\"%1\"] = %2").arg(kv.first, luaValue(kv.second));
+        cmd = "eval hl.device({ " + fields.join(QStringLiteral(", ")).toUtf8() + " })";
+    } else {
+        QStringList cmds;
+        for (const auto &kv : settings)
+            cmds << QStringLiteral("keyword device[%1]:%2 %3")
+                        .arg(name, kv.first, classicValue(kv.second));
+        cmd = "[[BATCH]]" + cmds.join(QLatin1Char(';')).toUtf8();
+    }
+    const bool ok = okReplies(request(cmd));
+    if (!ok)
+        qWarning("fanshell-qs: Hyprland refused %s", cmd.constData());
+    return ok;
+}
+
 QVariant optionValue(const QString &path)
 {
     /* The text form ("int: 2", "float: 1.000000", "str: /a/b"): the one

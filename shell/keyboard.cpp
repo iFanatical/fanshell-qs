@@ -25,7 +25,16 @@
 #include "osd.h"
 #include "overlay.h"
 #include "paths.h"
+#include "surface.h"
 #include "widgets.h"
+#include "wmstate.h"
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+#include <QDir>
+#include <QFile>
+
+#include "hypripc.h"
+#include "wlclient.h"
+#endif
 
 /* Last: Xlib's macros (None, Bool, Status, ...) collide with Qt's names. */
 #include <X11/XKBlib.h>
@@ -163,6 +172,29 @@ bool markApplied()
     }
     return present;
 }
+
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+/* Caps Lock and Num Lock as the keyboards' LEDs show them, which Hyprland
+ * keeps in step with its keymap state; it reports no lock changes over IPC
+ * and Wayland tells only the focused client. As locked modifiers: LockMask
+ * for Caps Lock, Mod2Mask for Num Lock (their usual places). */
+unsigned int ledLocks()
+{
+    unsigned int mods = 0;
+    const QDir leds(QStringLiteral("/sys/class/leds"));
+    for (const QString &name : leds.entryList(QDir::Dirs | QDir::NoDotAndDotDot)) {
+        const bool caps = name.endsWith(QLatin1String("::capslock"));
+        const bool num = name.endsWith(QLatin1String("::numlock"));
+        if (!caps && !num)
+            continue;
+        QFile f(leds.filePath(name) + QStringLiteral("/brightness"));
+        if (!f.open(QIODevice::ReadOnly) || f.readAll().trimmed().toInt() <= 0)
+            continue;
+        mods |= caps ? LockMask : Mod2Mask;
+    }
+    return mods;
+}
+#endif
 
 /* Milliseconds since the last keyboard or mouse input, or -1. */
 qint64 idleMs()
@@ -475,6 +507,21 @@ KeyboardSettings::KeyboardSettings(QObject *parent) : QObject(parent)
                  QStringLiteral("set"), QString::number(m_backlightRestore)});
     });
 
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland()) {
+        m_locked = ledLocks();
+        m_ledPoll.setInterval(250);
+        connect(&m_ledPoll, &QTimer::timeout, this,
+                [this]() { lockStateChanged(ledLocks()); });
+        m_ledPoll.start();
+        /* A reload puts hyprland.lua's input settings back. */
+        connect(WmState::instance(), &WmState::configReloaded, this, [this]() {
+            applyOptions(true);
+            applyRepeat();
+            applyAtLogin();
+        });
+    }
+#endif
     if (Display *dpy = display()) {
         XkbStateRec state;
         if (XkbGetState(dpy, XkbUseCoreKbd, &state) == Success)
@@ -498,6 +545,14 @@ KeyboardSettings::KeyboardSettings(QObject *parent) : QObject(parent)
 
 void KeyboardSettings::applyAtLogin()
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* Hyprland's own option: Num Lock on whenever it sets a keymap up. */
+    if (Surface::wayland()) {
+        HyprIpc::setOption(QStringLiteral("input:numlock_by_default"),
+                           m_settings.numlock);
+        return;
+    }
+#endif
     if (markApplied() || !m_settings.numlock)
         return;
     quiet();
@@ -507,6 +562,13 @@ void KeyboardSettings::applyAtLogin()
 
 void KeyboardSettings::applyRepeat()
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland()) {
+        HyprIpc::setOptions({{QStringLiteral("input:repeat_delay"), m_settings.repeatDelay},
+                             {QStringLiteral("input:repeat_rate"), m_settings.repeatRate}});
+        return;
+    }
+#endif
     Display *dpy = display();
     if (!dpy)
         return;
@@ -522,6 +584,28 @@ void KeyboardSettings::applyRepeat()
  * keyboard that has just been added with the server's defaults. */
 void KeyboardSettings::applyOptions(bool force)
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* input:kb_options, keeping options hyprland.lua set that this window
+     * does not manage. */
+    if (Surface::wayland()) {
+        const QString current =
+            HyprIpc::optionValue(QStringLiteral("input:kb_options")).toString();
+        QStringList options;
+        for (const QString &o : current.split(QLatin1Char(','), Qt::SkipEmptyParts))
+            if (!managedOption(o.trimmed()))
+                options << o.trimmed();
+        for (const char *o : {capsChoices[choiceIndex(capsChoices, m_settings.caps)].option,
+                              composeChoices[choiceIndex(composeChoices, m_settings.compose)].option})
+            if (*o)
+                options << QString::fromLatin1(o);
+        const QString wanted = options.join(QLatin1Char(','));
+        if (force || wanted != current) {
+            quiet();
+            HyprIpc::setOption(QStringLiteral("input:kb_options"), wanted);
+        }
+        return;
+    }
+#endif
     Display *dpy = display();
     if (!dpy)
         return;
@@ -607,7 +691,10 @@ void KeyboardSettings::set(const Settings &s)
         applyOptions(false);
     if (s.repeatDelay != old.repeatDelay || s.repeatRate != old.repeatRate)
         applyRepeat();
-    if (s.numlock && !old.numlock) {
+    if (Surface::wayland()) {
+        if (s.numlock != old.numlock)
+            applyAtLogin();
+    } else if (s.numlock && !old.numlock) {
         quiet();
         setNumlock(true);
     }
@@ -632,7 +719,7 @@ void KeyboardSettings::lockStateChanged(unsigned int lockedMods)
     if (!changed || !m_settings.lockOsd || nowMs() < m_quietUntil)
         return;
     Display *dpy = display();
-    const unsigned int num = dpy ? numlockMask(dpy) : 0;
+    const unsigned int num = dpy ? numlockMask(dpy) : Surface::wayland() ? Mod2Mask : 0;
     if (changed & LockMask)
         HardwareOsd::instance()->showLock(QStringLiteral("Caps Lock"),
                                           QStringLiteral("A"),
@@ -650,9 +737,33 @@ void KeyboardSettings::backlightTick()
     m_backlightTimer.stop();
     HardwareControls *hw = HardwareControls::instance();
     if (!hw->hasKeyboardBacklight() || m_settings.backlightIdle <= 0) {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+        delete m_backlightIdle;
+        m_backlightIdle = nullptr;
+#endif
         backlightRestore();
         return;
     }
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* Wayland: told when input stops and starts again. Whatever programs
+     * ask of the screen, the keyboard light is about the keyboard. */
+    if (Surface::wayland()) {
+        delete m_backlightIdle;
+        m_backlightIdle = nullptr;
+        if (!Wl::IdleWatch::supported())
+            return;
+        m_backlightIdle = new Wl::IdleWatch(m_settings.backlightIdle * 1000, true, this);
+        connect(m_backlightIdle, &Wl::IdleWatch::idled, this, [this, hw]() {
+            if (hw->keyboardLevel() > 0) {
+                m_backlightRestore = hw->keyboardLevel();
+                hw->setKeyboardBacklight(0);
+            }
+        });
+        connect(m_backlightIdle, &Wl::IdleWatch::resumed, this,
+                &KeyboardSettings::backlightRestore);
+        return;
+    }
+#endif
     const qint64 idle = idleMs();
     if (idle < 0)
         return;
