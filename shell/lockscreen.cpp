@@ -10,6 +10,8 @@
 #include <QFontMetricsF>
 #include <QHash>
 #include <QImageReader>
+#include <QJsonArray>
+#include <QJsonObject>
 #include <QKeyEvent>
 #include <QLocalSocket>
 #include <QMouseEvent>
@@ -62,6 +64,13 @@
 #include "surface.h"
 #include "theme.h"
 #include "wallpaper.h"
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+#include <wayland-client.h>
+
+#include "hypripc.h"
+#include "sessionlock.h"
+#include "wlclient.h"
+#endif
 
 namespace {
 
@@ -89,9 +98,32 @@ xcb_window_t rootWindow(xcb_connection_t *c)
     return xcb_setup_roots_iterator(xcb_get_setup(c)).data->root;
 }
 
-/* An X server answers on $DISPLAY. */
+/* A Wayland session: the lock is the compositor's session lock, not X
+ * windows -- an X lock would cover only XWayland. */
+bool waylandSession()
+{
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    const char *wl = getenv("WAYLAND_DISPLAY");
+    return wl && *wl;
+#else
+    return false;
+#endif
+}
+
+/* The compositor answers on $WAYLAND_DISPLAY, or an X server on $DISPLAY. */
 bool displayAlive()
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (waylandSession()) {
+        wl_display *d = wl_display_connect(nullptr);
+        if (d)
+            wl_display_disconnect(d);
+        return d != nullptr;
+    }
+#endif
+    const char *display = getenv("DISPLAY");
+    if (!display || !*display)
+        return false;
     xcb_connection_t *c = xcb_connect(nullptr, nullptr);
     const bool ok = !xcb_connection_has_error(c);
     xcb_disconnect(c);
@@ -315,7 +347,7 @@ public:
         : QWidget(nullptr, Qt::Window | Qt::FramelessWindowHint
                                | Qt::X11BypassWindowManagerHint
                                | Qt::WindowStaysOnTopHint),
-          m_locker(locker), m_screen(screen)
+          m_locker(locker), m_screen(screen), m_output(screen->name())
     {
         setWindowTitle(QStringLiteral("fanshell-qs-lock"));
         setAttribute(Qt::WA_OpaquePaintEvent);
@@ -325,7 +357,16 @@ public:
         setGeometry(screen->geometry());
     }
 
+    /* Wayland: never shown, only painted into a lock surface the size of
+     * `output`'s (sessionlock.h). */
+    LockWindow(Locker *locker, const QString &output, const QSize &size)
+        : QWidget(nullptr), m_locker(locker), m_output(output)
+    {
+        resize(size);
+    }
+
     QScreen *lockScreen() const { return m_screen; }
+    QString outputName() const { return m_output; }
 
     /* The media buttons as last painted, for clicks: previous, play, next. */
     QRectF mediaButtons[3];
@@ -340,6 +381,7 @@ protected:
 private:
     Locker *m_locker;
     QPointer<QScreen> m_screen;
+    QString m_output;
 };
 
 /* Watches the root's children for anything mapped or raised over us. */
@@ -418,7 +460,7 @@ public:
             m_caretOn = !m_caretOn;
             /* Just the field, not the whole screen. */
             if (m_primary)
-                m_primary->update(m_fieldRect.toAlignedRect().adjusted(-4, -4, 4, 4));
+                refresh(m_primary, m_fieldRect.toAlignedRect().adjusted(-4, -4, 4, 4));
         });
         m_promptIdle.setSingleShot(true);
         m_promptIdle.setInterval(promptIdleMs);
@@ -429,8 +471,7 @@ public:
         m_cursorIdle.setSingleShot(true);
         m_cursorIdle.setInterval(cursorIdleMs);
         connect(&m_cursorIdle, &QTimer::timeout, this, [this]() {
-            for (LockWindow *w : m_windows)
-                w->setCursor(Qt::BlankCursor);
+            setCursorShown(false);
         });
         m_displayOff.setSingleShot(true);
         connect(&m_displayOff, &QTimer::timeout, this, &Locker::displaysOff);
@@ -443,7 +484,7 @@ public:
         m_guard.setInterval(2000);
         connect(&m_guard, &QTimer::timeout, this, [this]() {
             restack();
-            if (m_primary) {
+            if (m_primary && m_primary->windowHandle()) {
                 m_primary->windowHandle()->setKeyboardGrabEnabled(true);
                 m_primary->windowHandle()->setMouseGrabEnabled(true);
             }
@@ -501,6 +542,10 @@ public:
     bool lock()
     {
         m_uptime = uptimeText();
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+        if (waylandSession())
+            return lockWayland();
+#endif
         syncWindows();
         if (!m_primary || !grab(m_primary, 60))
             return false;
@@ -536,6 +581,85 @@ public:
         return true;
     }
 
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* The session lock instead of windows and grabs. */
+    bool lockWayland()
+    {
+        m_session = new SessionLock(this);
+        m_session->paint = [this](const QString &output, QPainter &p) {
+            for (LockWindow *w : std::as_const(m_windows))
+                if (w->outputName() == output) {
+                    paint(w, p);
+                    return;
+                }
+        };
+        connect(m_session, &SessionLock::surfacesChanged, this, &Locker::syncSurfaces);
+        connect(m_session, &SessionLock::keyPressed, this, [this](QKeyEvent *e) {
+            wakeDisplays();
+            key(e);
+        });
+        connect(m_session, &SessionLock::pressed, this,
+                [this](const QString &output, const QPointF &pos) {
+                    wakeDisplays();
+                    for (LockWindow *w : std::as_const(m_windows))
+                        if (w->outputName() == output)
+                            press(w, pos);
+                });
+        connect(m_session, &SessionLock::moved, this, [this]() {
+            wakeDisplays();
+            pointerMoved();
+        });
+        /* Another locker took the session over: it is that one's now. */
+        connect(m_session, &SessionLock::finished, this,
+                []() { QCoreApplication::exit(lockerUnlocked); });
+        if (!m_session->lock(5000))
+            return false;
+        m_locked = true;
+        if (m_statusFd >= 0) {
+            const char locked = 'L';
+            if (write(m_statusFd, &locked, 1) < 0)
+                perror("fanshell-qs-shell lock");
+        }
+        notifyShell(this, QStringLiteral("lock"), QStringLiteral("locked"));
+        scheduleClock();
+        activity();
+        return true;
+    }
+
+    /* A LockWindow per lock surface, sized like it. The prompt goes where
+     * Hyprland has focus, where the user is looking. */
+    void syncSurfaces()
+    {
+        const QStringList outputs = m_session->outputs();
+        QVector<LockWindow *> keep;
+        for (const QString &name : outputs) {
+            LockWindow *win = nullptr;
+            for (LockWindow *w : std::as_const(m_windows))
+                if (w->outputName() == name)
+                    win = w;
+            const QSize size = m_session->size(name);
+            if (!win)
+                win = new LockWindow(this, name, size);
+            else if (win->size() != size)
+                win->resize(size);
+            keep << win;
+        }
+        for (LockWindow *w : std::as_const(m_windows))
+            if (!keep.contains(w))
+                w->deleteLater();
+        m_windows = keep;
+        QString focused;
+        for (const QJsonValue &v : HyprIpc::requestArray("monitors"))
+            if (v.toObject().value(QStringLiteral("focused")).toBool())
+                focused = v.toObject().value(QStringLiteral("name")).toString();
+        m_primary = keep.isEmpty() ? nullptr : keep.first();
+        for (LockWindow *w : std::as_const(keep))
+            if (w->outputName() == focused)
+                m_primary = w;
+        updateAll();
+    }
+#endif
+
     void paint(LockWindow *w, QPainter &p);
     void key(QKeyEvent *e);
     void press(LockWindow *w, const QPointF &pos);
@@ -552,9 +676,47 @@ public:
     {
         activity();
         if (!m_cursorIdle.isActive())
-            for (LockWindow *w : m_windows)
-                w->setCursor(Qt::ArrowCursor);
+            setCursorShown(true);
         m_cursorIdle.start();
+    }
+
+    void setCursorShown(bool shown)
+    {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+        if (m_session) {
+            m_session->setCursorVisible(shown);
+            return;
+        }
+#endif
+        for (LockWindow *w : m_windows)
+            w->setCursor(shown ? Qt::ArrowCursor : Qt::BlankCursor);
+    }
+
+    /* Repaint a window, or the part `r` of it. */
+    void refresh(LockWindow *w, const QRect &r = QRect())
+    {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+        if (m_session) {
+            m_session->damage(w->outputName());
+            return;
+        }
+#endif
+        if (r.isNull())
+            w->update();
+        else
+            w->update(r);
+    }
+
+    /* Wayland: any input powers displays switched off by displaysOff()
+     * back up (X does that by itself). */
+    void wakeDisplays()
+    {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+        if (m_displaysOff) {
+            m_displaysOff = false;
+            Wl::Client::instance()->setPower(true);
+        }
+#endif
     }
 
 private:
@@ -674,10 +836,7 @@ private:
     /* The wallpaper of `w`'s output, blurred to its size. */
     const QPixmap &background(LockWindow *w)
     {
-        const QString path = m_wallpapers
-                                 .forOutput(w->lockScreen() ? w->lockScreen()->name()
-                                                            : QString())
-                                 .path;
+        const QString path = m_wallpapers.forOutput(w->outputName()).path;
         const QString key = QStringLiteral("%1\n%2x%3")
                                 .arg(path)
                                 .arg(w->width())
@@ -701,13 +860,13 @@ private:
     void updatePrimary()
     {
         if (m_primary)
-            m_primary->update();
+            refresh(m_primary);
     }
 
     void updateAll()
     {
         for (LockWindow *w : m_windows)
-            w->update();
+            refresh(w);
     }
 
     void showPrompt(bool on)
@@ -811,6 +970,15 @@ private:
         m_locked = false;
         m_guard.stop();
         restoreDpms();
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+        if (m_session) {
+            wakeDisplays();
+            m_session->unlock();
+            notifyShell(this, QStringLiteral("lock"), QStringLiteral("unlocked"),
+                        []() { QCoreApplication::exit(lockerUnlocked); });
+            return;
+        }
+#endif
         if (m_primary) {
             m_primary->windowHandle()->setKeyboardGrabEnabled(false);
             m_primary->windowHandle()->setMouseGrabEnabled(false);
@@ -823,6 +991,12 @@ private:
 
     void displaysOff()
     {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+        if (m_session) {
+            m_displaysOff = Wl::Client::instance()->setPower(false);
+            return;
+        }
+#endif
         xcb_connection_t *c = conn();
         const xcb_query_extension_reply_t *ext =
             c ? xcb_get_extension_data(c, &xcb_dpms_id) : nullptr;
@@ -869,6 +1043,10 @@ private:
 
     bool capsLock() const
     {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+        if (m_session)
+            return m_session->capsLock();
+#endif
         xcb_connection_t *c = conn();
         if (!c)
             return false;
@@ -962,6 +1140,10 @@ private:
     QTimer m_guard;
     int m_displayOffSecs = 300;
     bool m_enabledDpms = false;
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    SessionLock *m_session = nullptr;
+    bool m_displaysOff = false;
+#endif
 
     CollectorProcess m_weather;
     QString m_weatherIcon, m_weatherText;
@@ -1376,11 +1558,24 @@ int runLocker(int argc, char **argv, int statusFd)
     signal(SIGTERM, SIG_DFL);
     signal(SIGINT, SIG_DFL);
     signal(SIGHUP, SIG_DFL);
-    qputenv("QT_QPA_PLATFORM", "xcb");
+    /* Wayland: Qt only paints, offscreen; the session lock has its own
+     * connection (sessionlock.h). */
+    const bool wayland = waylandSession();
+    qputenv("QT_QPA_PLATFORM", wayland ? "offscreen" : "xcb");
 
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("fanshell-qs-lock"));
     app.setQuitOnLastWindowClosed(false);
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (wayland) {
+        if (!SessionLock::supported())
+            return lockerGrabFailed;
+        /* If this locker dies, Hyprland keeps the session locked and lets
+         * the next one the supervisor starts take over only with this. */
+        if (HyprIpc::available())
+            HyprIpc::setOption(QStringLiteral("misc:allow_session_lock_restore"), true);
+    } else
+#endif
     if (!Surface::active())
         return lockerGrabFailed;
     QObject::connect(&app, &QCoreApplication::aboutToQuit, &ProcUtil::terminateAll);
@@ -1465,7 +1660,7 @@ int supervise(int argc, char **argv, int notifyFd)
             return 0;
         if (WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == lockerUnlocked)
             return 0;
-        /* The X session has ended: nothing left to lock. */
+        /* The session has ended: nothing left to lock. */
         if (!displayAlive())
             return 0;
         if (!everLocked)
@@ -1489,8 +1684,10 @@ int supervise(int argc, char **argv, int notifyFd)
 
 QString displayKey()
 {
-    QString key = QProcessEnvironment::systemEnvironment().value(
-        QStringLiteral("DISPLAY"), QStringLiteral(":0"));
+    const QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    QString key = waylandSession()
+                      ? QStringLiteral("wl-") + env.value(QStringLiteral("WAYLAND_DISPLAY"))
+                      : env.value(QStringLiteral("DISPLAY"), QStringLiteral(":0"));
     key.replace(QLatin1Char('/'), QLatin1Char('_'));
     key.replace(QLatin1Char(':'), QLatin1Char('x'));
     return key;
@@ -1523,9 +1720,9 @@ bool isLocked()
 
 int run(int argc, char **argv)
 {
-    const char *display = getenv("DISPLAY");
-    if (!display || !*display || !displayAlive()) {
-        fprintf(stderr, "fanshell-qs-shell lock: no X display\n");
+    if (!displayAlive()) {
+        fprintf(stderr, "fanshell-qs-shell lock: no %s display\n",
+                waylandSession() ? "Wayland" : "X");
         return 2;
     }
     if (pamService().isEmpty()) {

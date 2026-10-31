@@ -9,3 +9,4 @@
 # Patch cruft
 *.orig
 *.rej
+/shell/gen/

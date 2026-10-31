@@ -42,6 +42,7 @@
 #include "wmstate.h"
 #ifdef FANSHELL_QS_HAVE_WAYLAND
 #include "hypripc.h"
+#include "wlclient.h"
 #endif
 #include "idleinhibit.h"
 #include "lockscreen.h"
@@ -1606,14 +1607,31 @@ public:
         grid->addWidget(fieldLabel(QStringLiteral("Off after"), box()), 5, 0);
         grid->addWidget(m_off, 5, 1);
         lay->addLayout(grid);
+        /* Wayland outputs are on or off: one timeout, no stages. */
+        const bool wayland = Surface::wayland();
+        if (wayland) {
+            if (auto *label = qobject_cast<TextItem *>(
+                    grid->itemAtPosition(0, 0)->widget()))
+                label->setText(QStringLiteral("Turn off after"));
+            for (int row = 1; row <= 5; ++row)
+                for (int col = 0; col < 2; ++col)
+                    if (QLayoutItem *it = grid->itemAtPosition(row, col))
+                        if (it->widget())
+                            it->widget()->hide();
+        }
 
         auto *note = new QWidget(box());
         auto *nl = new QVBoxLayout(note);
         nl->setContentsMargins(0, 0, 0, 0);
         nl->setSpacing(2);
-        for (const char *line : {"Blanking paints the screen black.",
-                                 "Power saving (DPMS) powers the monitor down in stages;",
-                                 "most monitors treat standby, suspend and off alike."}) {
+        const QList<const char *> lines =
+            wayland ? QList<const char *>{"The displays power down after this long "
+                                          "without input,",
+                                          "unless a program asks the screen to stay on."}
+                    : QList<const char *>{"Blanking paints the screen black.",
+                                          "Power saving (DPMS) powers the monitor down in stages;",
+                                          "most monitors treat standby, suspend and off alike."};
+        for (const char *line : lines) {
             auto *t = new TextItem(note);
             t->setPixelSize(Theme::tinyFontSize);
             t->setColor(Theme::textMuted);
@@ -1747,6 +1765,8 @@ ScreenPower::ScreenPower(QObject *parent) : QObject(parent)
 
 Settings ScreenPower::live() const
 {
+    if (Surface::wayland())
+        return m_current;
     Settings s;
     xcb_connection_t *c = conn();
     if (!c)
@@ -1778,6 +1798,25 @@ Settings ScreenPower::live() const
 
 void ScreenPower::apply(const Settings &s)
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* Wayland: an idle notification, after which the outputs power off
+     * until the next input. Programs that inhibit idling hold it off. */
+    if (Surface::wayland()) {
+        m_current = s;
+        delete m_idleOff;
+        m_idleOff = nullptr;
+        if (s.blank > 0 && Wl::IdleWatch::supported()) {
+            m_idleOff = new Wl::IdleWatch(s.blank * 1000, false, this);
+            connect(m_idleOff, &Wl::IdleWatch::idled, this, &ScreenPower::idleOff);
+            connect(m_idleOff, &Wl::IdleWatch::resumed, this, [this]() {
+                if (m_poweredOff)
+                    Wl::Client::instance()->setPower(true);
+                m_poweredOff = false;
+            });
+        }
+        return;
+    }
+#endif
     xcb_connection_t *c = conn();
     if (!c)
         return;
@@ -1796,6 +1835,22 @@ void ScreenPower::apply(const Settings &s)
     }
     xcb_flush(c);
 }
+
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+/* Idle long enough: off, unless a program asked over D-Bus for the screen
+ * to stay on (which the compositor knows nothing of); then look again in a
+ * while, for as long as the idle lasts. */
+void ScreenPower::idleOff()
+{
+    if (!m_idleOff || !m_idleOff->idle() || m_poweredOff)
+        return;
+    if (!IdleInhibitor::instance()->reasons().isEmpty()) {
+        QTimer::singleShot(5000, this, &ScreenPower::idleOff);
+        return;
+    }
+    m_poweredOff = Wl::Client::instance()->setPower(false);
+}
+#endif
 
 void ScreenPower::set(Settings s)
 {
@@ -1822,6 +1877,24 @@ void ScreenPower::save(const Settings &s)
 
 void ScreenPower::turnOffNow()
 {
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    /* Off once input has been still for a moment -- or the click that asked
+     * would wake them at once -- and on at the next input. */
+    if (Surface::wayland()) {
+        if (!Wl::IdleWatch::supported())
+            return;
+        delete m_offNow;
+        m_offNow = new Wl::IdleWatch(700, true, this);
+        connect(m_offNow, &Wl::IdleWatch::idled, this,
+                []() { Wl::Client::instance()->setPower(false); });
+        connect(m_offNow, &Wl::IdleWatch::resumed, this, [this]() {
+            Wl::Client::instance()->setPower(true);
+            m_offNow->deleteLater();
+            m_offNow = nullptr;
+        });
+        return;
+    }
+#endif
     xcb_connection_t *c = conn();
     if (!c)
         return;
@@ -2187,6 +2260,12 @@ void ScreenLock::set(const Settings &s)
 void ScreenLock::tick()
 {
     m_idle.stop();
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland()) {
+        tickWayland();
+        return;
+    }
+#endif
     xcb_connection_t *c = conn();
     if (!c || m_settings.after <= 0)
         return;
@@ -2230,6 +2309,47 @@ void ScreenLock::tick()
      * for the fullscreen window going away. */
     m_idle.start(5000);
 }
+
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+/* Wayland: told when idle starts and ends, rather than polling. The
+ * compositor holds `idled` back while a program inhibits idling through
+ * Wayland (a fullscreen video); the D-Bus requests, audio and the
+ * fullscreen check are ours, so while idle they are looked at every few
+ * seconds, as on X11. */
+void ScreenLock::tickWayland()
+{
+    const int ms = m_settings.after * 1000;
+    if (ms <= 0 || !Wl::IdleWatch::supported()) {
+        delete m_idleWatch;
+        m_idleWatch = nullptr;
+        return;
+    }
+    if (!m_idleWatch || m_idleMs != ms) {
+        delete m_idleWatch;
+        m_idleMs = ms;
+        m_idleWatch = new Wl::IdleWatch(ms, false, this);
+        connect(m_idleWatch, &Wl::IdleWatch::idled, this, &ScreenLock::tick);
+        connect(m_idleWatch, &Wl::IdleWatch::resumed, this, [this]() {
+            m_fired = false;
+            m_idle.stop();
+        });
+    }
+    if (!m_idleWatch->idle())
+        return;
+    if (m_settings.skipAudio && !PulseBackend::instance()->playingKnown
+        && m_age.elapsed() < 10000) {
+        m_idle.start(1000);
+        return;
+    }
+    if (!m_fired && !m_locked
+        && !(m_settings.skipFullscreen && WmState::instance()->focusedFullscreen())
+        && pausedBy().isEmpty()) {
+        m_fired = true;
+        lockNow();
+    }
+    m_idle.start(5000);
+}
+#endif
 
 QStringList ScreenLock::pausedBy() const
 {

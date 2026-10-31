@@ -126,6 +126,9 @@ private:
  * startup. Without a dpms.conf the default is what .xinitrc used to ask of
  * xset: no blanking and DPMS off. */
 class ScreenPowerWindow;
+namespace Wl {
+class IdleWatch;
+}
 
 class ScreenPower : public QObject {
     Q_OBJECT
@@ -161,6 +164,13 @@ private:
      * moment; this watches for the wake-up to disable it again. */
     QTimer m_wake;
     bool m_enabledForOff = false;
+    /* Wayland: the settings (there is no server to ask), and the idle
+     * notifications that power the outputs off. */
+    Settings m_current;
+    Wl::IdleWatch *m_idleOff = nullptr;
+    Wl::IdleWatch *m_offNow = nullptr;
+    bool m_poweredOff = false;
+    void idleOff();
 };
 
 /* Locking the screen on its own: after a stretch of idle, and before the
@@ -171,7 +181,8 @@ private:
  *     fanshell-qs-shell ipc call lock toggle|show|hide|now
  *
  * Idle time is the X screen saver extension's time since the last input, so
- * it is independent of blanking. Lock before suspend holds a logind "delay"
+ * it is independent of blanking; on Wayland it is ext-idle-notify-v1's, and
+ * the lock screen is the compositor's session lock (sessionlock.h). Lock before suspend holds a logind "delay"
  * inhibitor and releases it once the screen is locked. Settings are saved to
  * lock.conf in Paths::configDir(); without one, the screen locks after 10
  * minutes idle, before suspend, and not while a window is fullscreen, and
@@ -232,6 +243,7 @@ private slots:
 private:
     explicit ScreenLock(QObject *parent = nullptr);
     void tick();
+    void tickWayland();
     void takeSleepInhibitor();
     void releaseSleepInhibitor();
 
@@ -247,6 +259,9 @@ private:
     bool m_locked = false;
     /* While locked: the lock file, for a lock screen gone without a word. */
     QTimer m_lockWatch;
+    /* Wayland: idle as the compositor reports it. */
+    Wl::IdleWatch *m_idleWatch = nullptr;
+    int m_idleMs = 0;
 };
 
 #endif
