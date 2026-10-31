@@ -176,6 +176,52 @@ QString luaString(const QString &s)
     return QLatin1Char('"') + out + QLatin1Char('"');
 }
 
+QString luaValue(const QVariant &v)
+{
+    switch (v.typeId()) {
+    case QMetaType::Bool:
+        return v.toBool() ? QStringLiteral("true") : QStringLiteral("false");
+    case QMetaType::Int:
+    case QMetaType::LongLong:
+    case QMetaType::UInt:
+    case QMetaType::ULongLong:
+        return QString::number(v.toLongLong());
+    case QMetaType::Double:
+    case QMetaType::Float:
+        return QString::number(v.toDouble(), 'g', 10);
+    default:
+        return luaString(v.toString());
+    }
+}
+
+bool setOption(const QString &path, const QVariant &value)
+{
+    QString classic;
+    if (value.typeId() == QMetaType::Bool)
+        classic = value.toBool() ? QStringLiteral("1") : QStringLiteral("0");
+    else
+        classic = value.toString();
+    const QStringList parts = path.split(QLatin1Char(':'));
+    QString lua = luaValue(value);
+    for (int i = parts.size() - 1; i >= 0; --i)
+        lua = QStringLiteral("{ %1 = %2 }").arg(parts[i], lua);
+    return keyword(path, classic, QStringLiteral("hl.config(%1)").arg(lua));
+}
+
+QJsonObject option(const QString &path)
+{
+    return requestJson("getoption " + path.toUtf8()).object();
+}
+
+QVariant optionValue(const QString &path)
+{
+    const QJsonObject o = option(path);
+    for (const char *key : {"int", "float", "str", "custom"})
+        if (o.contains(QLatin1String(key)))
+            return o.value(QLatin1String(key)).toVariant();
+    return QVariant();
+}
+
 } /* namespace HyprIpc */
 
 /* ------------------------------------------------------------ event stream */

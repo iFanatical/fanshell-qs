@@ -12,6 +12,11 @@
 #include "notification.h"
 #include "paths.h"
 #include "powerprofiles.h"
+#include "surface.h"
+#include "wmstate.h"
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+#include "hypripc.h"
+#endif
 
 namespace {
 
@@ -30,12 +35,13 @@ xcb_atom_t atom(xcb_connection_t *c, const char *name)
     return a;
 }
 
-/* Whether the focused window (_NET_ACTIVE_WINDOW) is fullscreen. */
+/* Whether the focused window is fullscreen: _NET_ACTIVE_WINDOW's state on
+ * X11, the window manager's word for it elsewhere. */
 bool fullscreenFocused()
 {
     xcb_connection_t *c = conn();
     if (!c)
-        return false;
+        return WmState::instance()->focusedFullscreen();
     const xcb_window_t root = xcb_setup_roots_iterator(xcb_get_setup(c)).data->root;
     const xcb_atom_t active = atom(c, "_NET_ACTIVE_WINDOW");
     const xcb_atom_t state = atom(c, "_NET_WM_STATE");
@@ -109,11 +115,41 @@ void GameMode::enable(bool on)
                 && power->activeProfile() == QLatin1String("performance"))
             power->setProfile(m_profileBefore);
     }
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+    if (Surface::wayland())
+        setCompositorEffects(!on);
+#endif
     NightLight::instance()->setHeld(on);
     IdleInhibitor::instance()->setShellRequest(IdleInhibitor::gameModeCookie,
                                                QStringLiteral("Game mode"), on);
     emit changed();
 }
+
+#ifdef FANSHELL_QS_HAVE_WAYLAND
+/* Hyprland's animations, blur and shadows cost frames; off while game mode
+ * is on, and back to what they were after. */
+void GameMode::setCompositorEffects(bool on)
+{
+    static const char *const options[] = {"animations:enabled",
+                                          "decoration:blur:enabled",
+                                          "decoration:shadow:enabled"};
+    if (!on) {
+        m_effectsBefore.clear();
+        for (const char *o : options) {
+            const QVariant v = HyprIpc::optionValue(QLatin1String(o));
+            if (!v.isValid())
+                continue;
+            m_effectsBefore.insert(QLatin1String(o), v.toInt() != 0);
+            HyprIpc::setOption(QLatin1String(o), false);
+        }
+        return;
+    }
+    for (auto it = m_effectsBefore.constBegin(); it != m_effectsBefore.constEnd(); ++it)
+        if (it.value())
+            HyprIpc::setOption(it.key(), true);
+    m_effectsBefore.clear();
+}
+#endif
 
 void GameMode::watchFullscreen()
 {

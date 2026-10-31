@@ -7,7 +7,8 @@
  * frames), the power profile is "performance" where there is one, and the
  * screen neither blanks nor locks (a controller is not X input). Turning it
  * off puts back the do-not-disturb setting and power profile it found, and
- * lets the night light catch up.
+ * lets the night light catch up. Under Hyprland it also switches off the
+ * compositor's animations, blur and shadows, and back on after.
  *
  * gamemode.auto=fullscreen in shell.conf turns it on by itself while the
  * focused window is fullscreen, and off again after. Switched off by hand
@@ -15,6 +16,7 @@
 #ifndef FANSHELL_QS_GAMEMODE_H
 #define FANSHELL_QS_GAMEMODE_H
 
+#include <QHash>
 #include <QObject>
 #include <QString>
 #include <QTimer>
@@ -35,6 +37,8 @@ private:
     explicit GameMode(QObject *parent = nullptr);
     void enable(bool on);
     void watchFullscreen();
+    /* Hyprland only: animations, blur and shadows on or (saved) off. */
+    void setCompositorEffects(bool on);
 
     bool m_active = false;
     /* What turning it off puts back. */
@@ -44,6 +48,8 @@ private:
     QTimer m_watch;
     bool m_autoOn = false;
     bool m_suppressed = false;
+    /* Hyprland options game mode switched off, and whether they were on. */
+    QHash<QString, bool> m_effectsBefore;
 };
 
 #endif

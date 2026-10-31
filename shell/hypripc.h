@@ -19,7 +19,9 @@
 #include <QJsonDocument>
 #include <QLocalSocket>
 #include <QObject>
+#include <QJsonObject>
 #include <QString>
+#include <QVariant>
 
 namespace HyprIpc {
 
@@ -64,6 +66,18 @@ bool keyword(const QString &option, const QString &value,
 
 /* Quote a string as a Lua literal, for the payloads above. */
 QString luaString(const QString &s);
+/* A value as a Lua literal: bools and numbers as they are, else quoted. */
+QString luaValue(const QVariant &v);
+
+/* A global option by its classic path ("decoration:blur:enabled"): set as
+ * keyword() does, with the Lua form built from the path (nested tables:
+ * hl.config({ decoration = { blur = { enabled = false } } })). */
+bool setOption(const QString &path, const QVariant &value);
+/* `getoption`'s answer, {"int": ..., "float": ..., "str": ..., "set": ...};
+ * empty when Hyprland has no such option. */
+QJsonObject option(const QString &path);
+/* option()'s value, whichever field holds it. */
+QVariant optionValue(const QString &path);
 
 } /* namespace HyprIpc */
 
