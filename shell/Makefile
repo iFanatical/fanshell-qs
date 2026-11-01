@@ -127,12 +127,24 @@ moc_%.cpp: %.h
 	$(CXX) -c $(CXXFLAGS) -o $@ $<
 
 $(OBJ): $(wildcard *.h)
+
+# The flags the objects were compiled with. make tracks files, not flags, so
+# without this a build with WAYLAND=1 after one without it compiled only the
+# new files and linked them with objects built for X11 alone (the oxwm
+# backend, plain windows instead of layer surfaces). The file changes only
+# when the flags do, which rebuilds everything.
+BUILD_FLAGS = $(CXX) $(CXXFLAGS) $(CC) | $(LDLIBS)
+.build-flags: FORCE
+	@printf '%s\n' '$(BUILD_FLAGS)' | cmp -s - $@ \
+	    || printf '%s\n' '$(BUILD_FLAGS)' > $@
+$(OBJ) fanshell-qs-shell: .build-flags
 ifeq ($(WAYLAND),1)
 $(MODULES:%=%.o) main.o: $(WL_GEN_H)
 endif
 
 clean:
-	rm -f fanshell-qs-shell *.o moc_*.cpp
+	rm -f fanshell-qs-shell *.o moc_*.cpp .build-flags
 	rm -rf gen
 
-.PHONY: all clean
+.PHONY: all clean FORCE
+FORCE:

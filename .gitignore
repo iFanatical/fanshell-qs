@@ -10,3 +10,4 @@
 *.orig
 *.rej
 /shell/gen/
+/shell/.build-flags
