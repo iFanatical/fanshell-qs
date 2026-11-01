@@ -3,6 +3,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
+#include <QSet>
 
 #include <algorithm>
 #include <limits>
@@ -290,6 +291,7 @@ void HyprState::refresh()
 
     QVector<Monitor> mons;
     QHash<int, int> active; /* monitor id -> its workspace */
+    QHash<int, QString> descriptions; /* monitor id -> its description */
     for (const QJsonValue &v : HyprIpc::requestArray("monitors")) {
         const QJsonObject o = v.toObject();
         if (o.value(QStringLiteral("disabled")).toBool())
@@ -303,6 +305,7 @@ void HyprState::refresh()
         m.h = o.value(QStringLiteral("height")).toInt();
         m.focused = o.value(QStringLiteral("focused")).toBool();
         active.insert(m.id, workspaceId(o, "activeWorkspace"));
+        descriptions.insert(m.id, o.value(QStringLiteral("description")).toString());
         mons.push_back(m);
     }
     /* Connection order is not stable across hotplug; id order keeps the
@@ -310,13 +313,52 @@ void HyprState::refresh()
     std::sort(mons.begin(), mons.end(),
               [](const Monitor &a, const Monitor &b) { return a.id < b.id; });
 
+    /* Each output's own workspaces: the ones rules pin to it, by connector
+     * name or by "desc:" and the start of its description. An output no
+     * rule names takes the first free set of five, in id order -- as
+     * fanhypr-qs's config/monitor_workspaces.lua does, so Mod+1-5 and the
+     * buttons agree. */
+    auto rulesFor = [this, &descriptions](const Monitor &m) {
+        QVector<int> ids = m_rules.value(m.name);
+        const QString desc = descriptions.value(m.id);
+        for (auto it = m_rules.cbegin(); it != m_rules.cend(); ++it) {
+            const QString &sel = it.key();
+            if (!sel.startsWith(QLatin1String("desc:")))
+                continue;
+            const QString want = sel.mid(5).trimmed();
+            if (want.isEmpty() || !desc.startsWith(want))
+                continue;
+            for (int id : *it)
+                if (!ids.contains(id))
+                    ids << id;
+        }
+        std::sort(ids.begin(), ids.end());
+        return ids;
+    };
+    QHash<int, QVector<int>> own; /* monitor id -> its rules' workspaces */
+    QSet<int> takenSets;
+    for (const Monitor &m : std::as_const(mons)) {
+        const QVector<int> ids = rulesFor(m);
+        own.insert(m.id, ids);
+        for (int id : ids)
+            takenSets.insert((id - 1) / workspacesPerMonitor);
+    }
+    int freeSet = 0;
+
     QHash<int, QVector<int>> blocks;
     for (int slot = 0; slot < mons.size(); ++slot) {
         Monitor &m = mons[slot];
-        QVector<int> block = m_rules.value(m.name);
-        if (block.isEmpty())
+        QVector<int> block = own.value(m.id);
+        if (block.isEmpty()) {
+            while (takenSets.contains(freeSet))
+                ++freeSet;
+            takenSets.insert(freeSet);
             for (int i = 0; i < workspacesPerMonitor; ++i)
-                block << slot * workspacesPerMonitor + i + 1;
+                block << freeSet * workspacesPerMonitor + i + 1;
+        }
+        /* Buttons are numbered from 1 on every output, as qtile's groups
+         * are; one shown from outside the block keeps its own number. */
+        const QVector<int> numbered = block;
         /* A workspace moved onto this output from outside its block would
          * otherwise leave nothing highlighted. */
         const int shown = active.value(m.id);
@@ -332,9 +374,10 @@ void HyprState::refresh()
                 m.selected |= bit;
             if (w.windows > 0)
                 m.occupied |= bit;
+            const int number = numbered.indexOf(id);
             const QString label = !w.name.isEmpty() && w.name != QString::number(id)
                                       ? w.name
-                                      : QString::number(id);
+                                      : QString::number(number >= 0 ? number + 1 : id);
             m.labels << label;
         }
         m.fullscreen = existing.value(shown).fullscreen;
