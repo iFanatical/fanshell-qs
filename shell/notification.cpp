@@ -51,6 +51,11 @@ constexpr int toastHorizontalOffset = 4;
  * matched range-4 shadow without clipping either. */
 constexpr int closeOverhang = 13;
 constexpr int closeRadius = 9;
+/* How far round the close circle a click still closes: the button is small,
+ * and it sits on the card's edge, where a near miss would otherwise land on
+ * the window behind. Within the overhang, so it stays on the surface. */
+constexpr int closeHitRadius = closeRadius + 4;
+static_assert(closeHitRadius <= closeOverhang, "the close target must fit the overhang");
 constexpr int rightColumnWidth = 68;
 constexpr int notificationImageSize = 56;
 constexpr int toastShadowRange = 4;
@@ -447,11 +452,18 @@ public:
             QPainterPath path;
             path.addRoundedRect(QRectF(card), Theme::radius, Theme::radius);
             shape += QRegion(path.toFillPolygon().toPolygon());
-            if (id == m_hovered) {
+            /* The close button's target. Under Wayland the shape is only
+             * where input goes (the compositor blurs by alpha), so every
+             * toast keeps it, invisible until the toast is hovered: brushing
+             * past the card's edge no longer drops the hover and sends the
+             * pointer to the window behind. Under X picom blurs the whole
+             * shape, so only the hovered toast's visible circle is in it. */
+            if (id == m_hovered || Surface::wayland()) {
                 const QPoint c(card.left() + closeRadius + 7, card.top());
-                shape += QRegion(QRect(c.x() - closeRadius - 1,
-                                       c.y() - closeRadius - 1,
-                                       2 * closeRadius + 3, 2 * closeRadius + 3),
+                shape += QRegion(QRect(c.x() - closeHitRadius - 1,
+                                       c.y() - closeHitRadius - 1,
+                                       2 * closeHitRadius + 3,
+                                       2 * closeHitRadius + 3),
                                  QRegion::Ellipse);
             }
             y += h + toastGap;
@@ -495,7 +507,7 @@ protected:
             const QPoint center(card.left() + closeRadius + 7, card.top());
             const QPoint delta = e->pos() - center;
             close = delta.x() * delta.x() + delta.y() * delta.y()
-                    <= closeRadius * closeRadius;
+                    <= closeHitRadius * closeHitRadius;
             if (!close)
                 action = actionAt(next, card, e->pos());
         }
@@ -538,7 +550,7 @@ protected:
         const QPoint closeCenter(card.left() + closeRadius + 7, card.top());
         const QPoint delta = e->pos() - closeCenter;
         if (delta.x() * delta.x() + delta.y() * delta.y()
-                <= closeRadius * closeRadius) {
+                <= closeHitRadius * closeHitRadius) {
             m_service->dismiss(id);
             return;
         }
