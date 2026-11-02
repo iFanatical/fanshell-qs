@@ -274,7 +274,6 @@ void HyprState::refresh()
     struct Ws {
         QString name;
         int windows = 0;
-        bool fullscreen = false;
     };
     QHash<int, Ws> existing;
     for (const QJsonValue &v : HyprIpc::requestArray("workspaces")) {
@@ -285,7 +284,6 @@ void HyprState::refresh()
         Ws w;
         w.name = o.value(QStringLiteral("name")).toString();
         w.windows = o.value(QStringLiteral("windows")).toInt();
-        w.fullscreen = o.value(QStringLiteral("hasfullscreen")).toBool();
         existing.insert(id, w);
     }
 
@@ -380,7 +378,6 @@ void HyprState::refresh()
                                       : QString::number(number >= 0 ? number + 1 : id);
             m.labels << label;
         }
-        m.fullscreen = existing.value(shown).fullscreen;
         blocks.insert(m.id, block);
     }
 
@@ -408,6 +405,13 @@ void HyprState::refresh()
         const int monId = o.value(QStringLiteral("monitor")).toInt();
         if (active.value(monId, -1) != workspaceId(o, "workspace"))
             continue;
+        /* Only a real fullscreen hides the bar. The workspace's hasfullscreen
+         * also counts a maximized window (fullscreen mode 1, as Remmina's
+         * fullscreen_state rule makes), which keeps out of the bar's way. */
+        if (o.value(QStringLiteral("fullscreen")).toInt() & 2)
+            for (Monitor &m : mons)
+                if (m.id == monId)
+                    m.fullscreen = true;
         if (focus < bestFocus.value(monId, std::numeric_limits<int>::max())) {
             bestFocus.insert(monId, focus);
             bestAddress.insert(monId, address);
