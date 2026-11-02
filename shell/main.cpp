@@ -33,6 +33,7 @@
 #include "status.h"
 #include "vibrance.h"
 #include "wallpaper.h"
+#include "wallpapervideo.h"
 #include "pills.h"
 #include "surface.h"
 #ifdef FANSHELL_QS_HAVE_XEMBED
@@ -59,6 +60,8 @@ int main(int argc, char *argv[])
     /* Its own processes, with their own QApplication. */
     if (!rawArgs.isEmpty() && rawArgs[0] == QLatin1String("lock"))
         return LockScreen::run(argc, argv);
+    if (!rawArgs.isEmpty() && rawArgs[0] == QLatin1String("wallpaper-video"))
+        return WallpaperVideo::run(argc, argv);
 
     QApplication app(argc, argv);
     app.setApplicationName(QStringLiteral("fanshell-qs-shell"));

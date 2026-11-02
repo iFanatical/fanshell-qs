@@ -2,14 +2,28 @@
 
 #include "surface.h"
 
+#include <cstdio>
+
 #ifdef FANSHELL_QS_HAVE_MPV
 
+#include <QApplication>
 #include <QGuiApplication>
 #include <QMetaObject>
 #include <QOpenGLContext>
+#include <QOpenGLWidget>
+#include <QPainter>
 #include <QPointer>
+#include <QScreen>
+#include <QSocketNotifier>
+#include <QThread>
+#include <QTimer>
+#include <QVariantAnimation>
 #include <QWidget>
 #include <QtGui/qguiapplication_platform.h>
+
+#include <unistd.h>
+
+#include "wallpaper.h"
 
 #include <mpv/client.h>
 #include <mpv/render_gl.h>
@@ -193,7 +207,182 @@ void VideoPlayer::releaseGL()
     }
 }
 
+
+/* ------------------------------------------------- the video's own process */
+
+namespace {
+
+/* One output's video, on the background layer above the shell's own
+ * wallpaper surface (made later, so stacked over it), which shows the
+ * video's first frame underneath. */
+class VideoSurface : public QOpenGLWidget {
+public:
+    VideoSurface(QScreen *screen, const QString &path, const QString &mode)
+        : QOpenGLWidget(nullptr)
+    {
+        setWindowTitle(QStringLiteral("fanshell-qs-wallpaper-video"));
+        Surface::SurfaceSpec spec;
+        spec.layer = Surface::Layer::Background;
+        spec.anchors = Surface::AnchorTop | Surface::AnchorBottom
+                       | Surface::AnchorLeft | Surface::AnchorRight;
+        spec.exclusiveZone = -1;
+        spec.keyboard = Surface::Keyboard::None;
+        spec.scope = QStringLiteral("fanshell-qs-wallpaper-video");
+        resize(screen->geometry().size());
+        Surface::configure(this, screen, spec);
+        m_px = (QSizeF(screen->geometry().size()) * screen->devicePixelRatio()).toSize();
+        /* Shown until mpv's first frame: what the shell shows beneath. */
+        m_poster = Wallpapers::render(path, mode, m_px);
+        m_player.reset(new VideoPlayer(this, path, mode));
+
+        m_anim.setStartValue(0.0);
+        m_anim.setEndValue(1.0);
+        m_anim.setEasingCurve(QEasingCurve::InOutQuad);
+        QObject::connect(&m_anim, &QVariantAnimation::valueChanged, this,
+                         [this](const QVariant &v) {
+                             m_t = v.toReal();
+                             update();
+                         });
+        /* Covered by the wallpaper that replaces it, as the shell's surface
+         * beneath shows it: going now changes nothing on screen. */
+        QObject::connect(&m_anim, &QVariantAnimation::finished, qApp,
+                         &QCoreApplication::quit, Qt::QueuedConnection);
+    }
+
+    ~VideoSurface() override
+    {
+        makeCurrent();
+        m_player->releaseGL();
+        doneCurrent();
+    }
+
+    /* A line from the shell: pause, play, or "fade <ms> <mode> <path>",
+     * to fade to that wallpaper and go. */
+    void command(const QString &line)
+    {
+        if (line == QLatin1String("pause") || line == QLatin1String("play")) {
+            m_player->setPaused(line == QLatin1String("pause"));
+            return;
+        }
+        if (!line.startsWith(QLatin1String("fade ")) || m_fading)
+            return;
+        m_fading = true;
+        const QStringList f = line.split(QLatin1Char(' '));
+        const int ms = f.value(1).toInt();
+        const QString mode = f.value(2);
+        const QString path = line.section(QLatin1Char(' '), 3);
+        if (ms <= 0 || path.isEmpty()) {
+            QCoreApplication::quit();
+            return;
+        }
+        /* Decoded aside, so the video does not stall meanwhile. */
+        auto image = std::make_shared<QImage>();
+        const QSize px = m_px;
+        QThread *thread = QThread::create(
+            [image, path, mode, px]() { *image = Wallpapers::render(path, mode, px); });
+        QObject::connect(thread, &QThread::finished, this, [this, thread, image, ms]() {
+            thread->deleteLater();
+            if (image->isNull()) {
+                QCoreApplication::quit();
+                return;
+            }
+            m_next = *image;
+            m_anim.setDuration(ms);
+            m_anim.start();
+        });
+        thread->start();
+    }
+
+protected:
+    void paintGL() override
+    {
+        QPainter p(this);
+        p.setRenderHint(QPainter::SmoothPixmapTransform, true);
+        p.beginNativePainting();
+        const bool video = m_player->render(int(defaultFramebufferObject()), m_px);
+        p.endNativePainting();
+        if (!video) {
+            p.fillRect(rect(), Qt::black);
+            if (!m_poster.isNull())
+                p.drawImage(rect(), m_poster);
+        }
+        if (!m_next.isNull()) {
+            p.setOpacity(m_t);
+            p.drawImage(rect(), m_next);
+        }
+    }
+
+private:
+    QSize m_px;
+    QImage m_poster;
+    QImage m_next;
+    qreal m_t = 0.0;
+    bool m_fading = false;
+    QVariantAnimation m_anim;
+    std::unique_ptr<VideoPlayer> m_player;
+};
+
+} /* namespace */
+
+int WallpaperVideo::run(int argc, char **argv)
+{
+    if (argc < 5) {
+        fprintf(stderr, "usage: fanshell-qs-shell wallpaper-video <output> <mode> <file>\n");
+        return 2;
+    }
+    QApplication app(argc, argv);
+    app.setApplicationName(QStringLiteral("fanshell-qs-wallpaper-video"));
+    app.setQuitOnLastWindowClosed(false);
+    if (!Surface::wayland()) {
+        fprintf(stderr, "fanshell-qs-shell wallpaper-video: Wayland only\n");
+        return 2;
+    }
+    const QString output = QString::fromLocal8Bit(argv[2]);
+    const QString mode = QString::fromLocal8Bit(argv[3]);
+    const QString path = QString::fromLocal8Bit(argv[4]);
+    QScreen *screen = nullptr;
+    for (QScreen *s : QGuiApplication::screens())
+        if (s->name() == output)
+            screen = s;
+    if (!screen)
+        return 1;
+    VideoSurface surface(screen, path, mode);
+    QObject::connect(qApp, &QGuiApplication::screenRemoved, qApp, [screen](QScreen *s) {
+        if (s == screen)
+            QCoreApplication::quit();
+    });
+
+    /* Commands from the shell on stdin, a line each; its end (the shell
+     * gone) ends this too. */
+    QSocketNotifier input(STDIN_FILENO, QSocketNotifier::Read);
+    QByteArray pending;
+    QObject::connect(&input, &QSocketNotifier::activated, qApp, [&]() {
+        char buf[4096];
+        const ssize_t n = ::read(STDIN_FILENO, buf, sizeof buf);
+        if (n <= 0) {
+            input.setEnabled(false);
+            QCoreApplication::quit();
+            return;
+        }
+        pending.append(buf, int(n));
+        int nl;
+        while ((nl = pending.indexOf('\n')) >= 0) {
+            surface.command(QString::fromUtf8(pending.left(nl)));
+            pending.remove(0, nl + 1);
+        }
+    });
+
+    surface.show();
+    return app.exec();
+}
+
 #else /* !FANSHELL_QS_HAVE_MPV */
+
+int WallpaperVideo::run(int, char **)
+{
+    fprintf(stderr, "fanshell-qs-shell wallpaper-video: built without libmpv\n");
+    return 2;
+}
 
 bool VideoPlayer::available()
 {

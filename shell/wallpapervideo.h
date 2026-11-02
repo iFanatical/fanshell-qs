@@ -1,6 +1,14 @@
 /* A video wallpaper's playback: libmpv, rendered through its OpenGL render
- * API into the wallpaper layer (wallpaper.cpp), looped and silent, decoded
- * on the GPU where it can be (hwdec=auto-safe).
+ * API, looped and silent, decoded on the GPU where it can be
+ * (hwdec=auto-safe).
+ *
+ * It runs in a process of its own per output, `fanshell-qs-shell
+ * wallpaper-video <output> <mode> <file>`, on a background-layer surface over
+ * the shell's: a heavy video (4K at 60 fps) drawn on the shell's own GUI
+ * thread held up the bar and everything else there. The shell
+ * (wallpaper.cpp) starts it and sends it lines on stdin -- pause, play, and
+ * "fade <ms> <mode> <path>" to cross-fade to the next wallpaper and exit --
+ * and it exits when stdin closes.
  *
  * Built when the shell is built for Wayland and libmpv is found
  * (FANSHELL_QS_HAVE_MPV); without it, and on X11, a video wallpaper shows
@@ -16,6 +24,11 @@
 class QWidget;
 struct mpv_handle;
 struct mpv_render_context;
+
+namespace WallpaperVideo {
+/* `fanshell-qs-shell wallpaper-video ...`; returns the exit status. */
+int run(int argc, char **argv);
+} /* namespace WallpaperVideo */
 
 class VideoPlayer {
 public:

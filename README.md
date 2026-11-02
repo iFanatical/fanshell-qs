@@ -356,7 +356,9 @@ once. After that, `~/.fehbg` can be deleted.
 Videos in the wallpaper directory (`.mp4`, `.webm`, `.mkv`, `.mov`, `.m4v`)
 are wallpapers too, marked with a play badge in the picker. Under Hyprland
 they play in the background layer through libmpv, looped and silent and
-decoded on the GPU where mpv can, and pause while a fullscreen window
+decoded on the GPU where mpv can, in a process of their own per output
+(`fanshell-qs-shell wallpaper-video`) so that a heavy video cannot slow the
+bar, and pause while a fullscreen window
 covers their output or the screen is locked. Under X11, without libmpv, or
 with `wallpaper.video=off`, a video shows its first frame instead, which
 ffmpeg extracts once into `~/.cache/fanshell-qs/wallpapers`; the lock screen

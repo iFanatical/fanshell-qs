@@ -277,20 +277,16 @@ private:
 
 } /* namespace */
 
-#ifdef FANSHELL_QS_HAVE_MPV
-#include <QOpenGLWidget>
-/* OpenGL, so mpv can draw a video wallpaper into it. */
-using LayerBase = QOpenGLWidget;
-#else
-using LayerBase = QWidget;
-#endif
-
 /* One output's wallpaper on Wayland: a background-layer surface covering
- * it, beneath every window. A new wallpaper fades in over the old one; a
- * video plays over its first frame once mpv has one. */
-class WallpaperLayer : public LayerBase {
+ * it, beneath every window. A new wallpaper fades in over the old one.
+ *
+ * A video plays in a process of its own (wallpapervideo.h), on a surface
+ * over this one, while this one shows its first frame: started once the
+ * fade to that frame is done, and told to fade to the next wallpaper itself
+ * and go, this one showing that wallpaper beneath it meanwhile. */
+class WallpaperLayer : public QWidget {
 public:
-    explicit WallpaperLayer(QScreen *screen) : LayerBase(nullptr), m_output(screen->name())
+    explicit WallpaperLayer(QScreen *screen) : QWidget(nullptr), m_output(screen->name())
     {
         setAttribute(Qt::WA_OpaquePaintEvent);
         setWindowTitle(QStringLiteral("fanshell-qs-wallpaper"));
@@ -314,6 +310,7 @@ public:
         QObject::connect(&m_anim, &QVariantAnimation::finished, this, [this]() {
             m_from = QImage();
             update();
+            startVideo();
         });
         /* A video pauses while nobody can see it. The lock screen is a
          * process of its own, so it is looked for now and then. */
@@ -323,99 +320,119 @@ public:
         QObject::connect(&m_lockPoll, &QTimer::timeout, this, [this]() { syncPaused(); });
     }
 
-    ~WallpaperLayer() override { stopVideo(); }
-
-    /* `image` is what to show, already laid out; `video`, when not empty,
-     * plays over it laid out as `mode`. */
-    void setWallpaper(const QImage &image, const QString &video, const QString &mode,
-                      int fadeMs)
+    ~WallpaperLayer() override
     {
-        const bool sameVideo = m_player && !video.isEmpty()
-                               && m_player->path() == video && m_player->mode() == mode;
+        if (m_video) {
+            m_video->disconnect();
+            m_video->closeWriteChannel();
+            m_video->waitForFinished(1000);
+        }
+    }
+
+    /* `image` is what to show, already laid out; `path` is the wallpaper,
+     * which plays over it when `video`. */
+    void setWallpaper(const QImage &image, const QString &path, const QString &mode,
+                      bool video, int fadeMs)
+    {
+        const QString next = video ? path : QString();
+        if (m_video && !m_stopping && next == m_videoPath && mode == m_videoMode) {
+            m_to = image;
+            update();
+            return;
+        }
         m_anim.stop();
-        m_from = QImage();
-        if (fadeMs > 0 && isVisible() && !sameVideo) {
-#ifdef FANSHELL_QS_HAVE_MPV
-            /* What is on screen now, a video's frame or a fade included. */
-            m_from = grabFramebuffer();
-#else
-            m_from = m_to;
-#endif
+        m_pendingPath = next;
+        m_pendingMode = mode;
+        if (m_video) {
+            /* Beneath the video, so at once; the video fades to it. */
+            m_from = QImage();
+            m_to = image;
+            m_t = 1.0;
+            update();
+            /* One already on its way out keeps the fade it was given. */
+            if (!m_stopping)
+                stopVideo(fadeMs, mode, path);
+            return;
         }
+        m_from = fadeMs > 0 && isVisible() ? m_to : QImage();
         m_to = image;
-        if (!sameVideo) {
-            stopVideo();
-            if (!video.isEmpty())
-                m_player.reset(new VideoPlayer(this, video, mode));
-            m_lockPoll.setInterval(2000);
-            if (m_player)
-                m_lockPoll.start();
-            syncPaused();
-        }
         m_t = m_from.isNull() ? 1.0 : 0.0;
         if (!isVisible())
             show();
         if (!m_from.isNull()) {
             m_anim.setDuration(fadeMs);
             m_anim.start();
+        } else {
+            startVideo();
         }
         update();
     }
 
 protected:
-#ifdef FANSHELL_QS_HAVE_MPV
-    void paintGL() override { paint(); }
-#else
-    void paintEvent(QPaintEvent *) override { paint(); }
-#endif
-
-private:
-    void paint()
+    void paintEvent(QPaintEvent *) override
     {
         QPainter p(this);
         p.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        bool video = false;
-#ifdef FANSHELL_QS_HAVE_MPV
-        if (m_player) {
-            p.beginNativePainting();
-            const qreal dpr = devicePixelRatioF();
-            video = m_player->render(int(defaultFramebufferObject()),
-                                     (QSizeF(size()) * dpr).toSize());
-            p.endNativePainting();
-        }
-#endif
-        if (!video) {
-            p.fillRect(rect(), Qt::black);
-            /* Rendered at device pixels; drawn into the logical rect. */
-            if (!m_to.isNull())
-                p.drawImage(rect(), m_to);
-        }
-        /* The old wallpaper over the new one, fading out. */
-        if (!m_from.isNull() && m_t < 1.0) {
-            p.setOpacity(1.0 - m_t);
+        p.fillRect(rect(), Qt::black);
+        /* Rendered at device pixels; drawn into the logical rect. */
+        if (!m_from.isNull())
             p.drawImage(rect(), m_from);
+        if (!m_to.isNull()) {
+            p.setOpacity(m_t);
+            p.drawImage(rect(), m_to);
         }
     }
 
-    void stopVideo()
+private:
+    /* The pending video, once nothing else is on its way out. */
+    void startVideo()
     {
-        if (!m_player)
+        if (m_video || m_pendingPath.isEmpty() || m_anim.state() == QAbstractAnimation::Running)
             return;
+        m_videoPath = m_pendingPath;
+        m_videoMode = m_pendingMode;
+        m_pendingPath.clear();
+        auto *proc = new QProcess(this);
+        m_video = proc;
+        proc->setProcessChannelMode(QProcess::ForwardedChannels);
+        QObject::connect(proc, &QProcess::finished, this, [this, proc]() {
+            proc->deleteLater();
+            if (m_video != proc)
+                return;
+            m_video = nullptr;
+            m_stopping = false;
+            m_videoPath.clear();
+            m_lockPoll.stop();
+            startVideo();
+        });
+        proc->start(QCoreApplication::applicationFilePath(),
+                    {QStringLiteral("wallpaper-video"), m_output, m_videoMode, m_videoPath});
+        m_paused = -1;
+        m_lockPoll.start();
+        syncPaused();
+    }
+
+    /* Has the video cross-fade to `path` (laid out as `mode`) over `ms`
+     * and exit; at once when `ms` is 0. */
+    void stopVideo(int ms, const QString &mode, const QString &path)
+    {
         m_lockPoll.stop();
-#ifdef FANSHELL_QS_HAVE_MPV
-        makeCurrent();
-        m_player->releaseGL();
-        doneCurrent();
-#endif
-        m_player.reset();
+        m_stopping = true;
+        if (ms > 0 && !path.isEmpty())
+            m_video->write(QStringLiteral("fade %1 %2 %3\n").arg(ms).arg(mode, path).toUtf8());
+        m_video->closeWriteChannel();
     }
 
     void syncPaused()
     {
-        if (!m_player)
+        if (!m_video || m_stopping)
             return;
         const WmState::Monitor *m = WmState::instance()->monitorByName(m_output);
-        m_player->setPaused((m && m->fullscreen) || LockScreen::isLocked());
+        const int paused = (m && m->fullscreen) || LockScreen::isLocked();
+        if (paused == m_paused)
+            return;
+        m_paused = paused;
+        m_video->write(paused ? "pause\n" : "play\n");
     }
 
     QString m_output;
@@ -423,7 +440,15 @@ private:
     QImage m_to;
     qreal m_t = 1.0;
     QVariantAnimation m_anim;
-    std::unique_ptr<VideoPlayer> m_player;
+    QProcess *m_video = nullptr;
+    /* Told to fade out and go; it is not the wallpaper any more. */
+    bool m_stopping = false;
+    QString m_videoPath;
+    QString m_videoMode;
+    /* Waiting for the fade or the old video to finish. */
+    QString m_pendingPath;
+    QString m_pendingMode;
+    int m_paused = -1;
     QTimer m_lockPoll;
 };
 
@@ -955,8 +980,7 @@ void WallpaperPicker::drawLayers(const Wallpapers::Config &conf, bool fade,
                 layer = new WallpaperLayer(o.screen);
             const Wallpapers::Choice choice = conf.forOutput(o.name);
             const bool plays = Wallpapers::isVideo(choice.path) && Wallpapers::videoPlays();
-            layer->setWallpaper(images->value(o.name), plays ? choice.path : QString(),
-                                choice.mode, ms);
+            layer->setWallpaper(images->value(o.name), choice.path, choice.mode, plays, ms);
         }
     });
     thread->start();
