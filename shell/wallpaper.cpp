@@ -1,5 +1,7 @@
 #include "wallpaper.h"
 
+#include <QCryptographicHash>
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -9,6 +11,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QProcess>
 #include <QStandardPaths>
 #include <QThread>
 #include <QVariantAnimation>
@@ -26,7 +29,9 @@
 #include "paths.h"
 #include "popup.h"
 #include "surface.h"
+#include "lockscreen.h"
 #include "theme.h"
+#include "wallpapervideo.h"
 #include "widgets.h"
 #include "wmstate.h"
 
@@ -272,11 +277,20 @@ private:
 
 } /* namespace */
 
+#ifdef FANSHELL_QS_HAVE_MPV
+#include <QOpenGLWidget>
+/* OpenGL, so mpv can draw a video wallpaper into it. */
+using LayerBase = QOpenGLWidget;
+#else
+using LayerBase = QWidget;
+#endif
+
 /* One output's wallpaper on Wayland: a background-layer surface covering
- * it, beneath every window. A new image fades in over the old one. */
-class WallpaperLayer : public QWidget {
+ * it, beneath every window. A new wallpaper fades in over the old one; a
+ * video plays over its first frame once mpv has one. */
+class WallpaperLayer : public LayerBase {
 public:
-    explicit WallpaperLayer(QScreen *screen) : QWidget(nullptr)
+    explicit WallpaperLayer(QScreen *screen) : LayerBase(nullptr), m_output(screen->name())
     {
         setAttribute(Qt::WA_OpaquePaintEvent);
         setWindowTitle(QStringLiteral("fanshell-qs-wallpaper"));
@@ -301,13 +315,43 @@ public:
             m_from = QImage();
             update();
         });
+        /* A video pauses while nobody can see it. The lock screen is a
+         * process of its own, so it is looked for now and then. */
+        QObject::connect(WmState::instance(), &WmState::changed, this,
+                         [this]() { syncPaused(); });
+        m_lockPoll.setInterval(2000);
+        QObject::connect(&m_lockPoll, &QTimer::timeout, this, [this]() { syncPaused(); });
     }
 
-    void setImage(const QImage &image, int fadeMs)
+    ~WallpaperLayer() override { stopVideo(); }
+
+    /* `image` is what to show, already laid out; `video`, when not empty,
+     * plays over it laid out as `mode`. */
+    void setWallpaper(const QImage &image, const QString &video, const QString &mode,
+                      int fadeMs)
     {
+        const bool sameVideo = m_player && !video.isEmpty()
+                               && m_player->path() == video && m_player->mode() == mode;
         m_anim.stop();
-        m_from = fadeMs > 0 && isVisible() ? m_to : QImage();
+        m_from = QImage();
+        if (fadeMs > 0 && isVisible() && !sameVideo) {
+#ifdef FANSHELL_QS_HAVE_MPV
+            /* What is on screen now, a video's frame or a fade included. */
+            m_from = grabFramebuffer();
+#else
+            m_from = m_to;
+#endif
+        }
         m_to = image;
+        if (!sameVideo) {
+            stopVideo();
+            if (!video.isEmpty())
+                m_player.reset(new VideoPlayer(this, video, mode));
+            m_lockPoll.setInterval(2000);
+            if (m_player)
+                m_lockPoll.start();
+            syncPaused();
+        }
         m_t = m_from.isNull() ? 1.0 : 0.0;
         if (!isVisible())
             show();
@@ -319,25 +363,68 @@ public:
     }
 
 protected:
-    void paintEvent(QPaintEvent *) override
+#ifdef FANSHELL_QS_HAVE_MPV
+    void paintGL() override { paint(); }
+#else
+    void paintEvent(QPaintEvent *) override { paint(); }
+#endif
+
+private:
+    void paint()
     {
         QPainter p(this);
         p.setRenderHint(QPainter::SmoothPixmapTransform, true);
-        p.fillRect(rect(), Qt::black);
-        /* Rendered at device pixels; drawn into the logical rect. */
-        if (!m_from.isNull())
+        bool video = false;
+#ifdef FANSHELL_QS_HAVE_MPV
+        if (m_player) {
+            p.beginNativePainting();
+            const qreal dpr = devicePixelRatioF();
+            video = m_player->render(int(defaultFramebufferObject()),
+                                     (QSizeF(size()) * dpr).toSize());
+            p.endNativePainting();
+        }
+#endif
+        if (!video) {
+            p.fillRect(rect(), Qt::black);
+            /* Rendered at device pixels; drawn into the logical rect. */
+            if (!m_to.isNull())
+                p.drawImage(rect(), m_to);
+        }
+        /* The old wallpaper over the new one, fading out. */
+        if (!m_from.isNull() && m_t < 1.0) {
+            p.setOpacity(1.0 - m_t);
             p.drawImage(rect(), m_from);
-        if (!m_to.isNull()) {
-            p.setOpacity(m_t);
-            p.drawImage(rect(), m_to);
         }
     }
 
-private:
+    void stopVideo()
+    {
+        if (!m_player)
+            return;
+        m_lockPoll.stop();
+#ifdef FANSHELL_QS_HAVE_MPV
+        makeCurrent();
+        m_player->releaseGL();
+        doneCurrent();
+#endif
+        m_player.reset();
+    }
+
+    void syncPaused()
+    {
+        if (!m_player)
+            return;
+        const WmState::Monitor *m = WmState::instance()->monitorByName(m_output);
+        m_player->setPaused((m && m->fullscreen) || LockScreen::isLocked());
+    }
+
+    QString m_output;
     QImage m_from;
     QImage m_to;
     qreal m_t = 1.0;
     QVariantAnimation m_anim;
+    std::unique_ptr<VideoPlayer> m_player;
+    QTimer m_lockPoll;
 };
 
 namespace {
@@ -389,9 +476,93 @@ void Wallpapers::Config::save() const
                  qPrintable(Paths::configFile(QLatin1String(stateName))));
 }
 
-QImage Wallpapers::render(const QString &path, const QString &mode, const QSize &size)
+bool Wallpapers::isVideo(const QString &path)
 {
-    if (path.isEmpty() || size.isEmpty())
+    static const QStringList exts{QStringLiteral("mp4"), QStringLiteral("webm"),
+                                  QStringLiteral("mkv"), QStringLiteral("mov"),
+                                  QStringLiteral("m4v")};
+    return exts.contains(QFileInfo(path).suffix().toLower());
+}
+
+namespace {
+
+/* Where still() keeps `path`'s first frame: named for the file and its
+ * size and time, so an edited video gets a new one. */
+QString stillCachePath(const QString &path)
+{
+    const QFileInfo fi(path);
+    QString cache = qEnvironmentVariable("XDG_CACHE_HOME");
+    if (cache.isEmpty())
+        cache = QDir::homePath() + QStringLiteral("/.cache");
+    const QByteArray key = QStringLiteral("%1\n%2\n%3")
+                               .arg(fi.absoluteFilePath())
+                               .arg(fi.size())
+                               .arg(fi.lastModified().toMSecsSinceEpoch())
+                               .toUtf8();
+    return cache + QStringLiteral("/fanshell-qs/wallpapers/")
+           + QString::fromLatin1(
+                 QCryptographicHash::hash(key, QCryptographicHash::Sha1).toHex())
+           + QStringLiteral(".png");
+}
+
+} /* namespace */
+
+QString Wallpapers::cachedStill(const QString &path)
+{
+    if (!isVideo(path))
+        return path;
+    const QString cached = stillCachePath(path);
+    return QFileInfo::exists(cached) ? cached : QString();
+}
+
+QString Wallpapers::still(const QString &path)
+{
+    if (!isVideo(path))
+        return path;
+    const QString cached = stillCachePath(path);
+    if (QFileInfo::exists(cached))
+        return cached;
+    QDir().mkpath(QFileInfo(cached).absolutePath());
+    /* Written aside and renamed, so a half-written frame is never read. */
+    const QString part = cached + QStringLiteral(".part");
+    QProcess ffmpeg;
+    ffmpeg.start(QStringLiteral("ffmpeg"),
+                 {QStringLiteral("-nostdin"), QStringLiteral("-v"), QStringLiteral("error"),
+                  QStringLiteral("-y"), QStringLiteral("-i"), path,
+                  QStringLiteral("-frames:v"), QStringLiteral("1"),
+                  QStringLiteral("-f"), QStringLiteral("image2"),
+                  QStringLiteral("-c:v"), QStringLiteral("png"), part});
+    if (!ffmpeg.waitForFinished(30000) || ffmpeg.exitStatus() != QProcess::NormalExit
+        || ffmpeg.exitCode() != 0) {
+        if (ffmpeg.error() == QProcess::FailedToStart)
+            qWarning("fanshell-qs: ffmpeg is needed for a video wallpaper's still");
+        else
+            qWarning("fanshell-qs: ffmpeg cannot read %s: %s", qPrintable(path),
+                     ffmpeg.readAllStandardError().trimmed().constData());
+        ffmpeg.kill();
+        QFile::remove(part);
+        return QString();
+    }
+    if (!QFile::rename(part, cached)) {
+        QFile::remove(part);
+        return QFileInfo::exists(cached) ? cached : QString();
+    }
+    return cached;
+}
+
+bool Wallpapers::videoPlays()
+{
+    return VideoPlayer::available()
+           && Paths::setting(QStringLiteral("wallpaper.video")).toLower()
+                  != QLatin1String("off");
+}
+
+QImage Wallpapers::render(const QString &source, const QString &mode, const QSize &size)
+{
+    if (source.isEmpty() || size.isEmpty())
+        return QImage();
+    const QString path = still(source);
+    if (path.isEmpty())
         return QImage();
     QImageReader reader(path);
     reader.setAutoTransform(true);
@@ -611,7 +782,10 @@ void WallpaperPicker::rescan()
     const QStringList globs{
         QStringLiteral("*.png"),  QStringLiteral("*.jpg"),
         QStringLiteral("*.jpeg"), QStringLiteral("*.webp"),
-        QStringLiteral("*.gif"),  QStringLiteral("*.bmp")};
+        QStringLiteral("*.gif"),  QStringLiteral("*.bmp"),
+        QStringLiteral("*.mp4"),  QStringLiteral("*.webm"),
+        QStringLiteral("*.mkv"),  QStringLiteral("*.mov"),
+        QStringLiteral("*.m4v")};
     const QFileInfoList files =
         dir.entryInfoList(globs, QDir::Files | QDir::Readable, QDir::Name);
 
@@ -647,10 +821,34 @@ void WallpaperPicker::rescan()
 
 void WallpaperPicker::decodeNext()
 {
+    if (m_extracting)
+        return;
     for (Wallpaper &w : entries) {
         if (w.decoded)
             continue;
-        QImageReader r(w.path);
+        const QString image = Wallpapers::cachedStill(w.path);
+        if (image.isEmpty()) {
+            /* A video's first frame takes ffmpeg a moment: off the GUI
+             * thread, then back here. */
+            m_extracting = true;
+            m_decoder.stop();
+            const QString path = w.path;
+            QThread *thread = QThread::create([path]() { Wallpapers::still(path); });
+            connect(thread, &QThread::finished, this, [this, thread, path]() {
+                thread->deleteLater();
+                m_extracting = false;
+                /* Unreadable: no thumbnail rather than trying again. */
+                if (Wallpapers::cachedStill(path).isEmpty())
+                    for (Wallpaper &e : entries)
+                        if (e.path == path)
+                            e.decoded = true;
+                emit changed();
+                m_decoder.start();
+            });
+            thread->start();
+            return;
+        }
+        QImageReader r(image);
         r.setAutoTransform(true);
         /* Ask the decoder itself to downscale -- libjpeg/libpng can do this
          * while reading, which is far cheaper than decoding full size and
@@ -719,13 +917,16 @@ void WallpaperPicker::drawLayers(const Wallpapers::Config &conf, bool fade,
     const int generation = ++m_generation;
     auto images = std::make_shared<QHash<QString, QImage>>();
     auto failed = std::make_shared<QString>();
-    QThread *thread = QThread::create([conf, outs, images, failed]() {
+    const bool plays = Wallpapers::videoPlays();
+    QThread *thread = QThread::create([conf, outs, images, failed, plays]() {
         for (const Out &o : outs) {
             const Wallpapers::Choice choice = conf.forOutput(o.name);
             if (choice.path.isEmpty())
                 continue;
             const QImage img = Wallpapers::render(choice.path, choice.mode, o.size);
-            if (img.isNull()) {
+            /* A video that plays does without its still (no ffmpeg): black
+             * until its first frame. */
+            if (img.isNull() && !(plays && Wallpapers::isVideo(choice.path))) {
                 *failed = choice.path;
                 return;
             }
@@ -752,7 +953,10 @@ void WallpaperPicker::drawLayers(const Wallpapers::Config &conf, bool fade,
             WallpaperLayer *&layer = m_layers[o.screen];
             if (!layer)
                 layer = new WallpaperLayer(o.screen);
-            layer->setImage(images->value(o.name), ms);
+            const Wallpapers::Choice choice = conf.forOutput(o.name);
+            const bool plays = Wallpapers::isVideo(choice.path) && Wallpapers::videoPlays();
+            layer->setWallpaper(images->value(o.name), plays ? choice.path : QString(),
+                                choice.mode, ms);
         }
     });
     thread->start();
@@ -985,6 +1189,24 @@ void WallpaperGrid::paintEvent(QPaintEvent *)
             p.drawText(thumb, Qt::AlignCenter,
                        w.decoded ? QStringLiteral("unreadable")
                                  : QStringLiteral("…"));
+        }
+
+        /* A video: a play mark in the corner. */
+        if (Wallpapers::isVideo(w.path)) {
+            const QRect badge(thumb.left() + 8, thumb.bottom() - 8 - 24, 24, 24);
+            p.save();
+            p.setPen(Qt::NoPen);
+            p.setBrush(QColor(0, 0, 0, 150));
+            p.drawEllipse(badge);
+            QPainterPath play;
+            const QPointF c = QRectF(badge).center();
+            play.moveTo(c.x() - 3.5, c.y() - 6);
+            play.lineTo(c.x() + 6.5, c.y());
+            play.lineTo(c.x() - 3.5, c.y() + 6);
+            play.closeSubpath();
+            p.setBrush(Qt::white);
+            p.drawPath(play);
+            p.restore();
         }
 
         /* The wallpaper in use gets an accent frame; the keyboard cursor gets

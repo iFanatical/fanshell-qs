@@ -198,6 +198,8 @@ out or empty.
 | pw-play or paplay | `pipewire-utils` or `pulseaudio-utils` | `media-video/pipewire` | the optional volume-change sound |
 | A terminal | `alacritty` or `xterm` | `x11-terms/alacritty` or `x11-terms/xterm` | `Terminal=true` launcher entries and the menu's actions (`$TERMINAL`, then alacritty for the menu, xterm for the launcher) |
 | xdg-utils | `xdg-utils` | `x11-misc/xdg-utils` | the menu opening URLs and files |
+| ffmpeg | `ffmpeg-free` (or `ffmpeg` from RPM Fusion) | `media-video/ffmpeg` | a video wallpaper's first frame: its thumbnail, the lock screen, and the wallpaper itself under X11 |
+| libmpv (build time) | `mpv-libs-devel` | `media-video/mpv` with USE `libmpv` (and `vaapi` for decoding straight into the GPU's memory) | video wallpapers that play, under Hyprland; `MPV=0` builds without it |
 
 ### Session extras
 
@@ -349,7 +351,16 @@ The shell draws the wallpaper itself (no feh) and sets it as the root
 window's background, published in `_XROOTPMAP_ID` for picom. The picker's
 "Apply to" drop-down sets it for every output or for one. If
 `wallpaper.conf` does not exist yet, the path in an old `~/.fehbg` is imported
-once. After that, `~/.fehbg` can be deleted. Runtime-only state (IPC sockets,
+once. After that, `~/.fehbg` can be deleted.
+
+Videos in the wallpaper directory (`.mp4`, `.webm`, `.mkv`, `.mov`, `.m4v`)
+are wallpapers too, marked with a play badge in the picker. Under Hyprland
+they play in the background layer through libmpv, looped and silent and
+decoded on the GPU where mpv can, and pause while a fullscreen window
+covers their output or the screen is locked. Under X11, without libmpv, or
+with `wallpaper.video=off`, a video shows its first frame instead, which
+ffmpeg extracts once into `~/.cache/fanshell-qs/wallpapers`; the lock screen
+blurs that frame too. Runtime-only state (IPC sockets,
 scratchpad window ids, the `maximize` layout memo) stays in
 `$XDG_RUNTIME_DIR`: it means nothing after a reboot.
 
@@ -658,6 +669,7 @@ ups.community=public
 | `wallpaper.mode` | how a new pick is laid out on an output, as feh's modes: `fill` (default), `center`, `max`, `scale`, `tile`; what is already set keeps the mode it was set with |
 | `wallpaper.fade` | `off` makes a new pick appear at once instead of cross-fading (for weaker machines); default `on` |
 | `wallpaper.fade_ms` | length of that cross-fade in milliseconds (default `500`, up to `10000`) |
+| `wallpaper.video` | `off` shows a video wallpaper's first frame instead of playing it; default `on` |
 | `weather.unit` | `C` for Celsius, default Fahrenheit |
 | `ups.host` | the UPS's SNMP card; unset, the power pill shows the CPU+GPU estimate instead (see [UPS](#ups)) |
 | `ups.community` | SNMPv1 community (default `public`) |

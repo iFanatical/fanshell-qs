@@ -33,6 +33,14 @@
  * to the next one itself, so no wallpaper daemon (awww, hyprpaper) is
  * needed -- or wanted, as it would draw over or under this one.
  *
+ * Videos (mp4, webm, mkv, mov, m4v) are wallpapers too. On Wayland, built
+ * with libmpv, they play looped and silent in the background layer
+ * (wallpapervideo.h), paused while a fullscreen window covers the output or
+ * the screen is locked; wallpaper.video=off in shell.conf shows them still.
+ * Everywhere else -- the picker's thumbnail, the lock screen, the root
+ * window on X11, and a layer before its first frame -- a video is its first
+ * frame, which ffmpeg extracts once into ~/.cache/fanshell-qs/wallpapers.
+ *
  * The directory is scanned NON-recursively on purpose -- a `backup/` subtree
  * of old wallpapers lives under it that has no business in the picker. */
 #ifndef FANSHELL_QS_WALLPAPER_H
@@ -69,6 +77,18 @@ struct Config {
  * output, black where it leaves room; null when it cannot be read. Safe off
  * the GUI thread. */
 QImage render(const QString &path, const QString &mode, const QSize &size);
+
+/* Whether `path` is a video, by its extension. */
+bool isVideo(const QString &path);
+/* An image of `path`: itself, or for a video its first frame, extracted
+ * with ffmpeg and cached (blocking; off the GUI thread). Empty when it
+ * cannot be had. */
+QString still(const QString &path);
+/* still() if it is already cached, without extracting anything. */
+QString cachedStill(const QString &path);
+/* Whether videos play (wallpaper.video in shell.conf, and libmpv on
+ * Wayland), rather than showing their first frame. */
+bool videoPlays();
 
 } /* namespace Wallpapers */
 
@@ -147,6 +167,8 @@ private:
      * starts at construction, they are normally ready before the picker is
      * first opened. */
     void decodeNext();
+    /* A video's first frame is being extracted for its thumbnail. */
+    bool m_extracting = false;
 
     Wallpapers::Config m_conf;
     WallpaperWindow *m_win;

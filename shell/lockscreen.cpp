@@ -246,7 +246,8 @@ QImage wallpaperImage(const QString &path)
 {
     if (path.isEmpty())
         return QImage();
-    QImageReader reader(path);
+    /* A video wallpaper: its first frame. */
+    QImageReader reader(Wallpapers::still(path));
     reader.setAutoTransform(true);
     const QSize size = reader.size();
     if (size.isValid())
