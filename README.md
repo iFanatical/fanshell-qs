@@ -198,7 +198,8 @@ out or empty.
 | pw-play or paplay | `pipewire-utils` or `pulseaudio-utils` | `media-video/pipewire` | the optional volume-change sound |
 | A terminal | `alacritty` or `xterm` | `x11-terms/alacritty` or `x11-terms/xterm` | `Terminal=true` launcher entries and the menu's actions (`$TERMINAL`, then alacritty for the menu, xterm for the launcher) |
 | xdg-utils | `xdg-utils` | `x11-misc/xdg-utils` | the menu opening URLs and files |
-| ffmpeg | `ffmpeg-free` (or `ffmpeg` from RPM Fusion) | `media-video/ffmpeg` | a video wallpaper's first frame: its thumbnail, the lock screen, and the wallpaper itself under X11 |
+| ffmpeg | `ffmpeg` from RPM Fusion (Fedora's own `ffmpeg-free` decodes neither H.264 nor HEVC) | `media-video/ffmpeg` | a video wallpaper's first frame: its thumbnail, the lock screen, and the wallpaper itself under X11; and, through libmpv, playing it |
+| The GPU's VA-API driver | Intel: `intel-media-driver` (RPM Fusion nonfree); AMD: `mesa-va-drivers-freeworld` (RPM Fusion) | Intel: `media-libs/libva-intel-media-driver`; AMD: `media-libs/mesa` with USE `vaapi` | video wallpapers decoded on the GPU instead of the CPU |
 | libmpv (build time) | `mpv-libs-devel` | `media-video/mpv` with USE `libmpv` (and `vaapi` for decoding straight into the GPU's memory) | video wallpapers that play, under Hyprland; `MPV=0` builds without it |
 
 ### Session extras
@@ -265,7 +266,8 @@ make link-config           # link this repo's config files into $HOME
 Or `tools/install-shell`, which also checks the build and session
 dependencies (offering to install what is missing, and stopping without
 them; the list is `need_shell` in `tools/lib.sh`, which the session repos'
-`install.sh` check too, before they build anything), moves a
+`install.sh` check too, before they build anything; fanhypr-qs's also
+installs the optional ones, `need_shell_optional`), moves a
 running session onto the new build (restarting the bar and reloading sxhkd)
 and removes the files fanoxwm-qs installed before the split. The session
 repos' `install.sh` run it as their last step.
@@ -671,7 +673,7 @@ ups.community=public
 | `wallpaper.mode` | how a new pick is laid out on an output, as feh's modes: `fill` (default), `center`, `max`, `scale`, `tile`; what is already set keeps the mode it was set with |
 | `wallpaper.fade` | `off` makes a new pick appear at once instead of cross-fading (for weaker machines); default `on` |
 | `wallpaper.fade_ms` | length of that cross-fade in milliseconds (default `500`, up to `10000`) |
-| `wallpaper.video` | `off` shows a video wallpaper's first frame instead of playing it; default `on` |
+| `wallpaper.video` | `off` shows a video wallpaper's first frame instead of playing it; `gpu` plays it only when the GPU decodes it, showing the first frame of one that would decode on the CPU (AV1 on older Intel graphics, say, which takes several cores at 4K); default `on` |
 | `weather.unit` | `C` for Celsius, default Fahrenheit |
 | `ups.host` | the UPS's SNMP card; unset, the power pill shows the CPU+GPU estimate instead (see [UPS](#ups)) |
 | `ups.community` | SNMPv1 community (default `public`) |

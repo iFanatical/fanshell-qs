@@ -19,6 +19,7 @@
 #include <QSize>
 #include <QString>
 
+#include <functional>
 #include <memory>
 
 class QWidget;
@@ -28,6 +29,9 @@ struct mpv_render_context;
 namespace WallpaperVideo {
 /* `fanshell-qs-shell wallpaper-video ...`; returns the exit status. */
 int run(int argc, char **argv);
+/* Its exit status when wallpaper.video=gpu and mpv can only decode the
+ * video on the CPU: the shell leaves the still showing. */
+constexpr int cpuOnly = 3;
 } /* namespace WallpaperVideo */
 
 class VideoPlayer {
@@ -55,6 +59,10 @@ public:
     bool render(int fbo, const QSize &size);
 
     void setPaused(bool paused);
+
+    /* Called once, with the first frame: mpv's hwdec-current, the GPU
+     * decoder it uses ("vaapi", ...), or empty when it decodes on the CPU. */
+    std::function<void(const QString &)> onDecoder;
 
     /* Frees the render context; with the view's GL context current. */
     void releaseGL();

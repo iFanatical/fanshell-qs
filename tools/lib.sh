@@ -51,15 +51,25 @@ require_user() {
 #   need CHECK FEDORA GENTOO ARCH WHAT
 #
 # CHECK is a command on the PATH, an absolute path that must exist, pc:MODULE
-# for a pkg-config module or h:HEADER for a C/C++ header. FEDORA, GENTOO and
+# for a pkg-config module, h:HEADER for a C/C++ header, or fn:FUNCTION for a
+# shell function that succeeds when it is there (for a check needing a pipe,
+# which the | separated lines cannot hold). FEDORA, GENTOO and
 # ARCH are the packages that provide it (space-separated), or - where the
 # distribution doesn't package it. WHAT says what needs it.
+#
+# Between need_optional_begin and need_optional_end, a need is optional: one
+# still missing after the install (a Gentoo USE flag emerge does not turn
+# on, say) is reported and the install goes on without it.
 _needs=
+_optional=0
 
 need() {
-    _needs="$_needs$1|$2|$3|$4|$5
+    _needs="$_needs$1|$2|$3|$4|$5|$_optional
 "
 }
+
+need_optional_begin() { _optional=1; }
+need_optional_end() { _optional=0; }
 
 _have() {
     case $1 in
@@ -68,6 +78,7 @@ _have() {
     h:*) printf '#include <%s>\n' "${1#h:}" |
         ${CXX:-g++} -E -x c++ $(pkg-config --cflags Qt6Gui 2>/dev/null) - >/dev/null 2>&1 ;;
     /*) [ -e "$1" ] ;;
+    fn:*) "${1#fn:}" ;;
     *) command -v "$1" >/dev/null 2>&1 ;;
     esac
 }
@@ -137,16 +148,119 @@ need_shell_wayland() {
     need jq jq app-misc/jq jq "the Displays popup's saved layouts"
 }
 
+# Checks for need_shell_optional().
+
+# An ffmpeg that decodes H.264 and HEVC: Fedora's ffmpeg-free decodes
+# neither, RPM Fusion's ffmpeg both.
+_ffmpeg_decodes_h264_hevc() {
+    command -v ffmpeg >/dev/null 2>&1 || return 1
+    _decoders=$(ffmpeg -hide_banner -decoders 2>/dev/null)
+    case $_decoders in *" h264 "*) ;; *) return 1 ;; esac
+    case $_decoders in *" hevc "*) return 0 ;; *) return 1 ;; esac
+}
+
+# mate-polkit's agent, where the distribution puts it.
+_mate_polkit_agent() {
+    for _f in /usr/libexec/polkit-mate-authentication-agent-1 \
+              /usr/lib/mate-polkit/polkit-mate-authentication-agent-1 \
+              /usr/libexec/mate-polkit/polkit-mate-authentication-agent-1; do
+        [ -x "$_f" ] && return 0
+    done
+    return 1
+}
+
+# A VA-API driver that decodes H.264 and HEVC on this machine's GPU, so
+# video wallpapers play on it rather than on the CPU.
+_vaapi_decodes_h264_hevc() {
+    command -v vainfo >/dev/null 2>&1 || return 1
+    _profiles=$(vainfo 2>/dev/null)
+    case $_profiles in *VAProfileH264*VAEntrypointVLD*) ;; *) return 1 ;; esac
+    case $_profiles in *VAProfileHEVC*VAEntrypointVLD*) return 0 ;; *) return 1 ;; esac
+}
+
+# Queues what the shell can use but runs without, each feature left out or
+# empty while it is missing (README.md, Optional and Session extras), and
+# what video wallpapers need: libmpv (built in when found), ffmpeg that
+# decodes H.264 and HEVC, and the GPU's VA-API driver. A session repo's
+# install.sh queues it after need_shell and need_shell_wayland, so a fresh
+# install has every feature.
+need_shell_optional() {
+    need_optional_begin
+    need nmcli NetworkManager net-misc/networkmanager networkmanager \
+        "the network pill and Wi-Fi list"
+    need bluetoothctl bluez net-wireless/bluez bluez-utils "the Bluetooth popup"
+    need brightnessctl brightnessctl app-misc/brightnessctl brightnessctl \
+        "laptop screen and keyboard backlight"
+    need ddcutil ddcutil app-misc/ddcutil ddcutil "external monitor brightness (DDC/CI)"
+    need powerprofilesctl power-profiles-daemon sys-power/power-profiles-daemon \
+        power-profiles-daemon "the power-profile selector"
+    need wg-quick wireguard-tools net-vpn/wireguard-tools wireguard-tools "the VPN pill"
+    need snmpget net-snmp-utils net-analyzer/net-snmp net-snmp "UPS wattage (ups.host)"
+    need curl curl net-misc/curl curl "the weather"
+    need pw-play pipewire-utils media-video/pipewire pipewire "the volume-change sound"
+    need xdg-open xdg-utils x11-misc/xdg-utils xdg-utils "the menu opening URLs and files"
+    need alacritty alacritty x11-terms/alacritty alacritty "the terminal for Terminal=true entries"
+    need xsettingsd xsettingsd x11-misc/xsettingsd xsettingsd "GTK/Qt settings for X programs"
+    need fn:_mate_polkit_agent mate-polkit mate-extra/mate-polkit mate-polkit \
+        "password prompts for privileged actions"
+    # Video wallpapers. On Gentoo, media-video/mpv needs USE libmpv.
+    need pc:mpv mpv-libs-devel media-video/mpv mpv "video wallpapers that play"
+    need fn:_ffmpeg_decodes_h264_hevc ffmpeg media-video/ffmpeg ffmpeg \
+        "video wallpapers' first frames (H.264 and HEVC; RPM Fusion's on Fedora)"
+    need vainfo libva-utils media-video/libva-utils libva-utils "checking the GPU's video decoding"
+    _vaapi_driver
+    need_optional_end
+}
+
+# The VA-API driver for this machine's GPU, by vendor. Nothing for a GPU
+# that has none (NVIDIA: mpv decodes with NVDEC or Vulkan there).
+_vaapi_driver() {
+    _gpus=$(lspci 2>/dev/null)
+    case $_gpus in
+    *VGA*Intel* | *Display*Intel*)
+        need fn:_vaapi_decodes_h264_hevc intel-media-driver \
+            media-libs/libva-intel-media-driver intel-media-driver \
+            "video wallpapers decoded on the Intel GPU"
+        ;;
+    *VGA*AMD* | *VGA*ATI* | *Display*AMD*)
+        # On Gentoo this is media-libs/mesa with USE vaapi.
+        need fn:_vaapi_decodes_h264_hevc mesa-va-drivers-freeworld media-libs/mesa \
+            libva-mesa-driver "video wallpapers decoded on the AMD GPU"
+        ;;
+    esac
+}
+
 # Sets _missing to the need() lines whose CHECK fails.
 _find_missing() {
     _missing=
-    while IFS='|' read -r _check _fedora _gentoo _arch _what; do
+    while IFS='|' read -r _check _fedora _gentoo _arch _what _opt; do
         [ -n "$_check" ] || continue
-        _have "$_check" || _missing="$_missing$_check|$_fedora|$_gentoo|$_arch|$_what
+        _have "$_check" || _missing="$_missing$_check|$_fedora|$_gentoo|$_arch|$_what|$_opt
 "
     done <<EOF_NEEDS
 $_needs
 EOF_NEEDS
+    # Whether any of them is required.
+    _required=0
+    case $_missing in *"|0
+"*) _required=1 ;; esac
+}
+
+# Reports the optional needs still in _missing, and stops on a required one.
+_finish_missing() {
+    [ -n "$_missing" ] || return 0
+    printf '%s' "$_missing" | while IFS='|' read -r _check _f _g _a _what _opt; do
+        if [ "$_opt" = 1 ]; then
+            printf 'warning: still missing, left out: %s (%s)\n' "$_check" "$_what" >&2
+        else
+            printf 'still missing: %s (%s)\n' "$_check" "$_what" >&2
+        fi
+    done
+    if [ "${distro:-}" = gentoo ]; then
+        printf 'note: on Gentoo, video wallpapers need media-video/mpv with USE libmpv\n' >&2
+        printf '      (and vaapi), and on AMD media-libs/mesa with USE vaapi\n' >&2
+    fi
+    [ "$_required" = 0 ] || die "missing dependencies"
 }
 
 # Sets distro to fedora, gentoo or arch, from /etc/os-release (ID, then
@@ -176,9 +290,13 @@ install_needed() {
     _pkgs=
     _unpackaged=
     printf 'missing dependencies:\n'
-    while IFS='|' read -r _check _fedora _gentoo _arch _what; do
+    while IFS='|' read -r _check _fedora _gentoo _arch _what _opt; do
         [ -n "$_check" ] || continue
-        printf '  %-28s %s\n' "$_check" "$_what"
+        if [ "$_opt" = 1 ]; then
+            printf '  %-28s %s (optional)\n' "$_check" "$_what"
+        else
+            printf '  %-28s %s\n' "$_check" "$_what"
+        fi
         case $distro in
         fedora) _p=$_fedora ;;
         gentoo) _p=$_gentoo ;;
@@ -186,7 +304,7 @@ install_needed() {
         *) _p=- ;;
         esac
         if [ "$_p" = - ]; then
-            _unpackaged="$_unpackaged $_check"
+            [ "$_opt" = 1 ] || _unpackaged="$_unpackaged $_check"
             continue
         fi
         for _one in $_p; do
@@ -204,8 +322,21 @@ EOF_MISSING
     [ -z "$_unpackaged" ] ||
         die "not packaged by $distro, install these yourself and run again:$_unpackaged"
 
+    # Fedora: ffmpeg and the GPUs' H.264/HEVC drivers are RPM Fusion's.
+    _rpmfusion=
+    if [ "$distro" = fedora ]; then
+        for _one in $_pkgs; do
+            case $_one in
+            ffmpeg | mesa-va-drivers-freeworld) _rpmfusion="$_rpmfusion free" ;;
+            intel-media-driver) _rpmfusion="$_rpmfusion free nonfree" ;;
+            esac
+        done
+    fi
+
     case $distro in
-    fedora) set -- dnf install -y ;;
+    # --allowerasing: RPM Fusion's ffmpeg replaces ffmpeg-free, and
+    # mesa-va-drivers-freeworld mesa-va-drivers.
+    fedora) set -- dnf install -y --allowerasing ;;
     gentoo) set -- emerge --noreplace ;;
     arch) set -- pacman -S --needed --noconfirm ;;
     esac
@@ -214,27 +345,39 @@ EOF_MISSING
     printf 'to install them:  sudo %s\n' "$*"
 
     if [ "${dry_run:-0}" = 1 ]; then
-        printf '  would: ask to install them, and stop if declined\n'
+        printf '  would: ask to install them, and stop if declined while a required one is missing\n'
         _needs=
         return 0
     fi
-    [ -t 0 ] || die "missing dependencies, and no terminal to ask on; install them and run again"
+    if [ ! -t 0 ]; then
+        [ "$_required" = 0 ] ||
+            die "missing dependencies, and no terminal to ask on; install them and run again"
+        _finish_missing
+        _needs=
+        return 0
+    fi
     printf 'missing dependencies, do you want to install them? [y/N] '
     read -r _answer || _answer=
     case $_answer in
     [Yy] | [Yy][Ee][Ss]) ;;
-    *) die "missing dependencies; install them and run again" ;;
+    *)
+        [ "$_required" = 0 ] || die "missing dependencies; install them and run again"
+        _finish_missing
+        _needs=
+        return 0
+        ;;
     esac
+    for _repo in $(printf '%s\n' $_rpmfusion | sort -u); do
+        _have /etc/yum.repos.d/rpmfusion-$_repo.repo && continue
+        printf 'enabling RPM Fusion (%s)\n' "$_repo"
+        sudo dnf install -y \
+            "https://mirrors.rpmfusion.org/$_repo/fedora/rpmfusion-$_repo-release-$(rpm -E %fedora).noarch.rpm" ||
+            die "enabling RPM Fusion ($_repo) failed"
+    done
     sudo "$@" || die "installing the missing dependencies failed"
 
     _find_missing
-    if [ -n "$_missing" ]; then
-        printf 'still missing after installing:\n' >&2
-        printf '%s' "$_missing" | while IFS='|' read -r _check _rest; do
-            printf '  %s\n' "$_check" >&2
-        done
-        die "missing dependencies"
-    fi
+    _finish_missing
     _needs=
     echo ok
 }

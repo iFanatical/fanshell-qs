@@ -23,6 +23,7 @@
 
 #include <unistd.h>
 
+#include "paths.h"
 #include "wallpaper.h"
 
 #include <mpv/client.h>
@@ -176,8 +177,19 @@ bool VideoPlayer::render(int fbo, const QSize &size)
         const char *cmd[] = {"loadfile", file.constData(), nullptr};
         mpv_command_async(m_mpv, 0, cmd);
     }
-    if (mpv_render_context_update(m_gl) & MPV_RENDER_UPDATE_FRAME)
+    if ((mpv_render_context_update(m_gl) & MPV_RENDER_UPDATE_FRAME) && !m_frame) {
         m_frame = true;
+        if (onDecoder) {
+            char *hw = mpv_get_property_string(m_mpv, "hwdec-current");
+            QString decoder = hw ? QString::fromUtf8(hw) : QString();
+            mpv_free(hw);
+            if (decoder == QLatin1String("no"))
+                decoder.clear();
+            /* Queued: it may end this process, not mid-render. */
+            QMetaObject::invokeMethod(
+                m_view, [cb = onDecoder, decoder]() { cb(decoder); }, Qt::QueuedConnection);
+        }
+    }
     if (!m_frame)
         return false;
     mpv_opengl_fbo target{fbo, size.width(), size.height(), 0};
@@ -234,6 +246,19 @@ public:
         /* Shown until mpv's first frame: what the shell shows beneath. */
         m_poster = Wallpapers::render(path, mode, m_px);
         m_player.reset(new VideoPlayer(this, path, mode));
+        /* wallpaper.video=gpu: a video the GPU cannot decode (AV1 on older
+         * Intel graphics, say) costs several cores; leave the still beneath
+         * instead. */
+        if (Paths::setting(QStringLiteral("wallpaper.video")).toLower()
+                == QLatin1String("gpu"))
+            m_player->onDecoder = [path](const QString &decoder) {
+                if (!decoder.isEmpty())
+                    return;
+                fprintf(stderr, "fanshell-qs: %s decodes on the CPU only; showing "
+                                "its still (wallpaper.video=gpu)\n",
+                        qPrintable(path));
+                QCoreApplication::exit(WallpaperVideo::cpuOnly);
+            };
 
         m_anim.setStartValue(0.0);
         m_anim.setEndValue(1.0);
