@@ -141,6 +141,12 @@ XEmbedTray::XEmbedTray(QObject *parent) : QObject(parent)
         m_display, m_root, -10000, -10000, legacyIconSize, legacyIconSize,
         0, CopyFromParent, InputOutput, CopyFromParent,
         CWOverrideRedirect | CWEventMask, &attrs);
+    /* Hyprland pulls this window onto a monitor, however far off-screen it
+     * is, so fanhypr-qs's window rules send it away by this name. It has to
+     * stay mapped: the docked icons inside it are read from it. */
+    char className[] = "fanshell-qs-xembed";
+    XClassHint classHint{className, className};
+    XSetClassHint(m_display, m_manager, &classHint);
     const unsigned long orientation = 0; /* horizontal */
     const unsigned long visual = XVisualIDFromVisual(
         DefaultVisual(m_display, screen));
@@ -326,6 +332,12 @@ void XEmbedTray::sendButton(Window window, int button)
 {
     if (!m_display || !m_entries.contains(window))
         return;
+    /* Wine hit-tests the root coordinates against the icon, and drops the
+     * click when they are not over it. */
+    int rootX = 0, rootY = 0;
+    Window child = None;
+    XTranslateCoordinates(m_display, window, m_root, legacyIconSize / 2,
+                          legacyIconSize / 2, &rootX, &rootY, &child);
     for (int type : {ButtonPress, ButtonRelease}) {
         XEvent event{};
         event.xbutton.type = type;
@@ -335,6 +347,9 @@ void XEmbedTray::sendButton(Window window, int button)
         event.xbutton.time = CurrentTime;
         event.xbutton.x = legacyIconSize / 2;
         event.xbutton.y = legacyIconSize / 2;
+        event.xbutton.x_root = rootX;
+        event.xbutton.y_root = rootY;
+        event.xbutton.state = type == ButtonRelease ? Button1Mask << (button - 1) : 0;
         event.xbutton.button = unsigned(button);
         event.xbutton.same_screen = True;
         XSendEvent(m_display, window, False,
