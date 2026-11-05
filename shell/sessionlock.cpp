@@ -301,6 +301,11 @@ bool SessionLock::lock(int timeoutMs)
     return m_locked;
 }
 
+bool SessionLock::refused() const
+{
+    return m_finished || wl_display_get_error(Wl::Client::instance()->display()) != 0;
+}
+
 void SessionLock::unlock()
 {
     if (!m_lock)
@@ -326,17 +331,17 @@ void SessionLock::unlock()
 
 void SessionLock::lockedEvent(void *data, ext_session_lock_v1 *)
 {
-    static_cast<SessionLock *>(data)->m_locked = true;
+    auto *l = static_cast<SessionLock *>(data);
+    l->m_locked = true;
+    emit l->confirmed();
 }
 
 void SessionLock::finishedEvent(void *data, ext_session_lock_v1 *)
 {
     auto *l = static_cast<SessionLock *>(data);
-    const bool was = l->m_locked;
     l->m_finished = true;
     l->m_locked = false;
-    if (was)
-        emit l->finished();
+    emit l->finished();
 }
 
 void SessionLock::addSurface(Wl::Output *o)
@@ -443,7 +448,10 @@ void SessionLock::draw(Surface *s)
     s->frame = wl_surface_frame(s->surface);
     wl_callback_add_listener(s->frame, &frameListener, s);
     wl_surface_commit(s->surface);
-    Wl::Client::instance()->flush();
+    /* Send only: Client::flush() also dispatches, and another output's
+     * configure handled here would rebuild the lock's windows while it is
+     * going through them. */
+    wl_display_flush(Wl::Client::instance()->display());
 }
 
 /* ------------------------------------------------------------------ input */

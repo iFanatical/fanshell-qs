@@ -56,10 +56,14 @@ public:
 
     /* Lock, and wait up to `timeoutMs` for the compositor to say the
      * session is locked; `paint` must be set first, since it is asked for
-     * the first frames meanwhile. False when it refused. */
+     * the first frames meanwhile. False when it has not by then: the lock
+     * stands unless refused(), and confirmed() follows when it does arrive.
+     * Hyprland stays locked once asked, so the lock must not be dropped. */
     bool lock(int timeoutMs);
     void unlock();
     bool locked() const { return m_locked; }
+    /* The compositor turned the lock down, or the connection is gone. */
+    bool refused() const;
 
     /* Outputs with a configured surface, and each one's size (logical). */
     QStringList outputs() const;
@@ -82,7 +86,10 @@ signals:
     void keyPressed(QKeyEvent *e);
     void pressed(const QString &output, const QPointF &pos);
     void moved();
-    /* The compositor ended the lock (another locker took over). */
+    /* The session is locked. */
+    void confirmed();
+    /* The compositor ended the lock (another locker took over) or refused
+     * it. */
     void finished();
 
 public:

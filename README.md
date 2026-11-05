@@ -469,6 +469,11 @@ defers to `login`), or i3lock's service when that is missing. With neither
 it refuses to lock, and the script falls back to i3lock, xsecurelock, slock,
 xscreensaver and then `loginctl lock-session`.
 
+Under Hyprland the lock is never given up once requested, however long the
+compositor takes to confirm it, since Hyprland stays locked from the request
+on. What each lock did, and why one died, goes to
+`~/.cache/fanshell-qs/lock.log`.
+
 The lock screen is the shell's binary but a process of its own, so the bar
 crashing never unlocks the session. A small supervisor (`fanshell-lock` in
 `ps`) holds a lock file in `$XDG_RUNTIME_DIR` while locked, and starts the

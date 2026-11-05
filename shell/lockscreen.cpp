@@ -41,6 +41,7 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <cstdarg>
 #include <cstring>
 #include <ctime>
 #include <memory>
@@ -52,6 +53,7 @@
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/prctl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -86,6 +88,51 @@ constexpr auto processName = "fanshell-lock";
 constexpr int promptIdleMs = 30000;
 /* The pointer hides after this long without moving. */
 constexpr int cursorIdleMs = 3000;
+/* How long the lock asks Hyprland to confirm before logging that it has not;
+ * it keeps waiting after. */
+constexpr int lockConfirmMs = 5000;
+/* lock.log starts over past this size. */
+constexpr off_t lockLogMax = 1024 * 1024;
+
+/* ~/.cache/fanshell-qs/lock.log: what each lock did, and, unless a terminal
+ * is watching, the locker's stderr, so a lock that dies leaves a reason.
+ * Nothing the user types goes here. */
+int g_lockLog = -1;
+
+void openLockLog()
+{
+    const char *cache = getenv("XDG_CACHE_HOME");
+    const QString dir = (cache && *cache ? QString::fromLocal8Bit(cache)
+                                         : QDir::homePath() + QStringLiteral("/.cache"))
+        + QStringLiteral("/fanshell-qs");
+    QDir().mkpath(dir);
+    const QByteArray path = QFile::encodeName(dir + QStringLiteral("/lock.log"));
+    g_lockLog = open(path.constData(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0600);
+    if (g_lockLog < 0)
+        return;
+    struct stat st;
+    if (fstat(g_lockLog, &st) == 0 && st.st_size > lockLogMax && ftruncate(g_lockLog, 0) < 0) {
+    }
+    if (!isatty(STDERR_FILENO))
+        dup2(g_lockLog, STDERR_FILENO);
+}
+
+__attribute__((format(printf, 1, 2))) void lockLog(const char *format, ...)
+{
+    if (g_lockLog < 0)
+        return;
+    const time_t now = time(nullptr);
+    tm local;
+    localtime_r(&now, &local);
+    char stamp[32];
+    strftime(stamp, sizeof stamp, "%F %T", &local);
+    char line[512];
+    va_list args;
+    va_start(args, format);
+    vsnprintf(line, sizeof line, format, args);
+    va_end(args);
+    dprintf(g_lockLog, "%s [%d] %s\n", stamp, int(getpid()), line);
+}
 
 xcb_connection_t *conn()
 {
@@ -611,10 +658,35 @@ public:
             pointerMoved();
         });
         /* Another locker took the session over: it is that one's now. */
-        connect(m_session, &SessionLock::finished, this,
-                []() { QCoreApplication::exit(lockerUnlocked); });
-        if (!m_session->lock(5000))
-            return false;
+        connect(m_session, &SessionLock::finished, this, []() {
+            lockLog("the compositor ended the lock");
+            QCoreApplication::exit(lockerUnlocked);
+        });
+        QElapsedTimer waited;
+        waited.start();
+        if (!m_session->lock(lockConfirmMs)) {
+            if (m_session->refused()) {
+                lockLog("the compositor refused the lock");
+                return false;
+            }
+            /* Hyprland took the request, and exiting now would leave it
+             * locked with nothing to unlock it: keep waiting. */
+            lockLog("not confirmed after %lld ms, on outputs: %s; still waiting",
+                    (long long)waited.elapsed(),
+                    m_session->outputs().join(QLatin1Char(' ')).toLocal8Bit().constData());
+            connect(m_session, &SessionLock::confirmed, this, [this, waited]() {
+                lockLog("locked after %lld ms", (long long)waited.elapsed());
+                waylandLocked();
+            });
+            return true;
+        }
+        lockLog("locked after %lld ms", (long long)waited.elapsed());
+        waylandLocked();
+        return true;
+    }
+
+    void waylandLocked()
+    {
         m_locked = true;
         if (m_statusFd >= 0) {
             const char locked = 'L';
@@ -624,7 +696,6 @@ public:
         notifyShell(this, QStringLiteral("lock"), QStringLiteral("locked"));
         scheduleClock();
         activity();
-        return true;
     }
 
     /* A LockWindow per lock surface, sized like it. The prompt goes where
@@ -1609,6 +1680,9 @@ int supervise(int argc, char **argv, int notifyFd)
         close(null);
     }
 
+    openLockLog();
+    lockLog("locking");
+
     bool everLocked = false;
     int quickFailures = 0;
     for (;;) {
@@ -1657,14 +1731,27 @@ int supervise(int argc, char **argv, int notifyFd)
             if (g_stop)
                 kill(pid, SIGTERM);
         }
-        if (g_stop)
+        if (g_stop) {
+            lockLog("stopped by a signal");
             return 0;
-        if (WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == lockerUnlocked)
+        }
+        if (WIFEXITED(wstatus) && WEXITSTATUS(wstatus) == lockerUnlocked) {
+            lockLog("unlocked");
             return 0;
+        }
         /* The session has ended: nothing left to lock. */
-        if (!displayAlive())
+        if (!displayAlive()) {
+            lockLog("the display is gone");
             return 0;
-        if (!everLocked)
+        }
+        const bool died = WIFSIGNALED(wstatus);
+        const int why = died ? WTERMSIG(wstatus) : WEXITSTATUS(wstatus);
+        lockLog("the lock screen died (%s %d)", died ? "signal" : "status", why);
+        /* Under Wayland it may have asked for the lock before it died, so the
+         * compositor is locked with nothing to unlock it, unless it says it
+         * could not lock at all. */
+        const bool couldNotLock = !died && why == lockerGrabFailed;
+        if (!everLocked && (couldNotLock || !waylandSession()))
             return 1;
 
         timespec now;
@@ -1676,10 +1763,7 @@ int supervise(int argc, char **argv, int notifyFd)
         } else {
             quickFailures = 0;
         }
-        fprintf(stderr, "fanshell-qs-shell lock: the lock screen died (%s %d); "
-                        "starting it again\n",
-                WIFSIGNALED(wstatus) ? "signal" : "status",
-                WIFSIGNALED(wstatus) ? WTERMSIG(wstatus) : WEXITSTATUS(wstatus));
+        lockLog("starting it again");
     }
 }
 
