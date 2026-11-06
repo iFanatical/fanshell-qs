@@ -2031,6 +2031,9 @@ public:
         grid->addWidget(fieldLabel(QStringLiteral("Display off when locked"), box()),
                         5, 0);
         grid->addWidget(m_displayOff, 5, 1);
+        m_promptOutput = new Selector(choiceList(), box());
+        grid->addWidget(fieldLabel(QStringLiteral("Lock screen on"), box()), 6, 0);
+        grid->addWidget(m_promptOutput, 6, 1);
         lay->addLayout(grid);
 
         m_pausedNow = new TextItem(box());
@@ -2086,6 +2089,14 @@ public:
             s.displayOff = v[i];
             change(s);
         };
+        m_promptOutput->chosen = [this](int i) {
+            const QStringList outputs = promptOutputs();
+            if (i < 0 || i >= outputs.size())
+                return;
+            LockSettings s = m_settings;
+            s.promptOutput = outputs[i];
+            change(s);
+        };
         connect(m_suspend, &ShellButton::activated, this, [this]() {
             LockSettings s = m_settings;
             s.beforeSuspend = !s.beforeSuspend;
@@ -2124,6 +2135,34 @@ public:
     }
 
 private:
+    /* "", for the focused output, then the connected ones left to right, and
+     * the saved one while it is unplugged, so opening this does not lose it. */
+    QStringList promptOutputs() const
+    {
+        QList<QScreen *> screens = QGuiApplication::screens();
+        std::sort(screens.begin(), screens.end(), [](QScreen *a, QScreen *b) {
+            return a->geometry().x() < b->geometry().x();
+        });
+        QStringList outputs{QString()};
+        for (const QScreen *s : std::as_const(screens))
+            outputs << s->name();
+        if (!outputs.contains(m_settings.promptOutput))
+            outputs << m_settings.promptOutput;
+        return outputs;
+    }
+
+    static QString promptOutputLabel(const QString &output)
+    {
+        if (output.isEmpty())
+            return QStringLiteral("Focused monitor");
+        for (const QScreen *s : QGuiApplication::screens())
+            if (s->name() == output)
+                return s->model().isEmpty()
+                    ? output
+                    : QStringLiteral("%1  %2").arg(output, s->model());
+        return QStringLiteral("%1 (not connected)").arg(output);
+    }
+
     void change(const LockSettings &s)
     {
         ScreenLock::instance()->set(s);
@@ -2142,6 +2181,12 @@ private:
         };
         fill(m_after, m_settings.after);
         fill(m_displayOff, m_settings.displayOff);
+        const QStringList outputs = promptOutputs();
+        QStringList outputLabels;
+        for (const QString &output : outputs)
+            outputLabels << promptOutputLabel(output);
+        m_promptOutput->setChoices(outputLabels,
+                                   int(outputs.indexOf(m_settings.promptOutput)));
         auto onOff = [](ShellButton *b, bool on) {
             b->setLabel(on ? QStringLiteral("On") : QStringLiteral("Off"));
             b->setActive(on);
@@ -2164,6 +2209,7 @@ private:
     LockSettings m_settings;
     Selector *m_after;
     Selector *m_displayOff;
+    Selector *m_promptOutput;
     ShellButton *m_suspend;
     ShellButton *m_fullscreen;
     ShellButton *m_audio;
@@ -2195,6 +2241,7 @@ ScreenLock::ScreenLock(QObject *parent) : QObject(parent)
     m_settings.displayOff =
         conf.value(QStringLiteral("display_off"), QString::number(m_settings.displayOff))
             .toInt();
+    m_settings.promptOutput = conf.value(QStringLiteral("prompt_output"));
 
     m_age.start();
     m_idle.setSingleShot(true);
@@ -2239,12 +2286,15 @@ void ScreenLock::set(const Settings &s)
             QStringLiteral("Automatic screen lock, set from the Screen lock "
                            "popup.\nafter: seconds idle; 0 = never.\n"
                            "display_off: seconds on the lock screen before the "
-                           "displays power down; 0 = never."),
+                           "displays power down; 0 = never.\n"
+                           "prompt_output: the output showing the clock and "
+                           "password field; empty = the focused one."),
             {QStringLiteral("after=%1").arg(s.after),
              QStringLiteral("before_suspend=%1").arg(s.beforeSuspend ? "on" : "off"),
              QStringLiteral("skip_fullscreen=%1").arg(s.skipFullscreen ? "on" : "off"),
              QStringLiteral("skip_audio=%1").arg(s.skipAudio ? "on" : "off"),
-             QStringLiteral("display_off=%1").arg(s.displayOff)}))
+             QStringLiteral("display_off=%1").arg(s.displayOff),
+             QStringLiteral("prompt_output=%1").arg(s.promptOutput)}))
         qWarning("fanshell-qs: cannot write %s",
                  qPrintable(Paths::configFile(QLatin1String(lockConf))));
     if (s.beforeSuspend)

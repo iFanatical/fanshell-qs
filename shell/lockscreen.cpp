@@ -479,6 +479,7 @@ public:
         const QHash<QString, QString> conf = Paths::readConf(QStringLiteral("lock.conf"));
         m_displayOffSecs = conf.value(QStringLiteral("display_off"),
                                       QStringLiteral("300")).toInt();
+        m_promptOutput = conf.value(QStringLiteral("prompt_output"));
 
         m_anim.setDuration(220);
         m_anim.setEasingCurve(QEasingCurve::OutCubic);
@@ -728,6 +729,9 @@ public:
         for (LockWindow *w : std::as_const(keep))
             if (w->outputName() == focused)
                 m_primary = w;
+        for (LockWindow *w : std::as_const(keep))
+            if (w->outputName() == m_promptOutput)
+                m_primary = w;
         updateAll();
     }
 #endif
@@ -835,6 +839,9 @@ private:
             for (LockWindow *w : keep)
                 if (w->geometry() == ps->geometry())
                     primary = w;
+        for (LockWindow *w : keep)
+            if (w->outputName() == m_promptOutput)
+                primary = w;
         if (primary != m_primary) {
             m_primary = primary;
             /* The grabs move to the window that takes the keyboard now. */
@@ -1181,6 +1188,7 @@ private:
 
     QVector<LockWindow *> m_windows;
     LockWindow *m_primary = nullptr;
+    QString m_promptOutput;
     RootWatcher m_watcher;
     bool m_locked = false;
 

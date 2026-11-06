@@ -208,6 +208,8 @@ public:
         int displayOff = 300;       /* seconds on the lock screen without
                                        input before the displays power
                                        down; 0 = never */
+        QString promptOutput;       /* the output with the clock and password
+                                       field; empty = the focused one */
     };
 
     static ScreenLock *instance();

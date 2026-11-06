@@ -342,7 +342,7 @@ cache loses nothing you chose:
 | `vibrance.conf` | digital vibrance per output; re-applied at start and when an output connects |
 | `outputs.conf` | output layouts, one per set of connected outputs; applied at login (`fanshell-qs-session`) and on hotplug |
 | `dpms.conf` | screen blanking and DPMS timeouts; applied at startup |
-| `lock.conf` | lock on idle, before sleep, the fullscreen and audio pauses, and display off when locked |
+| `lock.conf` | lock on idle, before sleep, the fullscreen and audio pauses, display off when locked, and which monitor shows the lock screen |
 | `nightlight.conf` | night light on or off, its temperatures, and the location it was last found at |
 | `keyboard.conf` | key repeat, Caps Lock and Compose keys, Num Lock at login, lock OSD, backlight timeout |
 | `mouse.conf` | pointer settings per device, by name |
@@ -522,6 +522,11 @@ requests.
 without one, the screen locks after 10 minutes, before sleep, and pauses for
 fullscreen and while audio plays, and the lock screen turns the displays
 off after 5 minutes.
+
+**Lock screen on** picks the monitor with the clock and password field
+(`prompt_output`, a connector name such as `DP-2`). It takes effect at the
+next lock. **Focused monitor**, the default, shows it on the focused monitor,
+or under X11 the primary one, as does a chosen monitor that is unplugged.
 
 ### Keyboard
 
