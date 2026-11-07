@@ -120,12 +120,12 @@ MOCHDRS  = widgets popup procutil wmstate oxwmipc oxwmstate qtilestate calendar 
 OBJ      = $(MODULES:%=%.o) main.o $(MOCHDRS:%=moc_%.o) $(WL_OBJ)
 
 all: fanshell-qs-shell fanshell-qs-ipc
-
-fanshell-qs-ipc: ipcclient.c
-	$(CC) $(CFLAGS) -O2 -Wall $(LDFLAGS) -o $@ $<
 ifneq ($(WAYLAND),1)
 	@echo 'note: built without Hyprland (Wayland) support -- see the top of shell/Makefile'
 endif
+
+fanshell-qs-ipc: ipcclient.c
+	$(CC) $(CFLAGS) -O2 -Wall $(LDFLAGS) -o $@ $<
 
 fanshell-qs-shell: $(OBJ)
 	$(CXX) -o $@ $(OBJ) $(LDLIBS)
