@@ -8,7 +8,8 @@
  *   fanshell-qs-shell ipc call shell quit
  *   fanshell-qs-shell ipc call wm changed      (qtile's hooks; see qtilestate.h)
  * A QLocalServer in $XDG_RUNTIME_DIR, keyed by $DISPLAY, readable by its
- * owner only. */
+ * owner only. fanshell-qs-ipc (ipcclient.c) is the same client without
+ * this binary's start-up cost, for key bindings. */
 #ifndef FANSHELL_QS_IPC_H
 #define FANSHELL_QS_IPC_H
 

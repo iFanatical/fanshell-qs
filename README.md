@@ -656,7 +656,12 @@ layout, input settings and shader then. Not tested on hardware yet: the
 Lua forms `hl.monitor{disabled = true}`, `vrr` and `hl.device` merging
 with a device's rules in `hyprland.lua`.
 
-## Configuration## Configuration
+Key bindings call `fanshell-qs-ipc <target> <function>` rather than
+`fanshell-qs-shell ipc call`. It does the same, without loading Qt and libmpv
+on every key press, which on a laptop takes about 400 ms, so a volume key's
+OSD shows at once.
+
+## Configuration
 
 Everything visual lives in `shell/theme.h`. Settings live in
 `~/.config/fanshell-qs/shell.conf`, a hand-edited `KEY=VALUE` file (`#`

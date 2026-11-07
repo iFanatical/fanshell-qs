@@ -4,6 +4,7 @@
 # Build output
 *.o
 /shell/fanshell-qs-shell
+/shell/fanshell-qs-ipc
 /shell/moc_*.cpp
 
 # Patch cruft

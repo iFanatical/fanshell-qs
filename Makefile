@@ -23,7 +23,7 @@ shell/fanshell-qs-shell:
 # guarantees that.
 install: all
 	install -d $(BINDIR)
-	install -m 755 shell/fanshell-qs-shell $(BINDIR)/fanshell-qs-shell
+	install -m 755 shell/fanshell-qs-shell shell/fanshell-qs-ipc $(BINDIR)
 	install -m 755 $(SCRIPTS) $(BINDIR)
 
 # Not under $(PREFIX): PAM looks for services in /etc/pam.d.
@@ -36,7 +36,7 @@ link-config:
 	./tools/link-config
 
 uninstall:
-	rm -f $(BINDIR)/fanshell-qs-shell
+	rm -f $(BINDIR)/fanshell-qs-shell $(BINDIR)/fanshell-qs-ipc
 	for s in $(notdir $(SCRIPTS)); do rm -f $(BINDIR)/$$s; done
 
 clean:
