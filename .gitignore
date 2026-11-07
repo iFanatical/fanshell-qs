@@ -5,6 +5,7 @@
 *.o
 /shell/fanshell-qs-shell
 /shell/fanshell-qs-ipc
+/shell/fanshell-qs-wallpaper-video
 /shell/moc_*.cpp
 
 # Patch cruft

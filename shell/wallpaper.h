@@ -35,7 +35,7 @@
  *
  * Videos (mp4, webm, mkv, mov, m4v) are wallpapers too. On Wayland, built
  * with libmpv, they play looped and silent in the background layer
- * (wallpapervideo.h), paused while a fullscreen window covers the output or
+ * (fanshell-qs-wallpaper-video), paused while a fullscreen window covers the output or
  * the screen is locked; wallpaper.video=off in shell.conf shows them still.
  * Everywhere else -- the picker's thumbnail, the lock screen, the root
  * window on X11, and a layer before its first frame -- a video is its first
@@ -56,6 +56,8 @@
 #include <QVector>
 #include <QWidget>
 
+#include "wallpaperimage.h"
+
 namespace Wallpapers {
 
 struct Choice {
@@ -73,20 +75,7 @@ struct Config {
     void save() const;
 };
 
-/* `path` laid out in a box of `size` as feh --bg-<mode> lays it out on one
- * output, black where it leaves room; null when it cannot be read. Safe off
- * the GUI thread. */
-QImage render(const QString &path, const QString &mode, const QSize &size);
-
-/* Whether `path` is a video, by its extension. */
-bool isVideo(const QString &path);
-/* An image of `path`: itself, or for a video its first frame, extracted
- * with ffmpeg and cached (blocking; off the GUI thread). Empty when it
- * cannot be had. */
-QString still(const QString &path);
-/* still() if it is already cached, without extracting anything. */
-QString cachedStill(const QString &path);
-/* Whether videos play (wallpaper.video in shell.conf, and libmpv on
+/* Whether videos play (wallpaper.video in shell.conf, and the player on
  * Wayland), rather than showing their first frame. */
 bool videoPlays();
 

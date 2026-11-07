@@ -1,8 +1,8 @@
 /* fanshell-qs-ipc <target> <function>: `fanshell-qs-shell ipc call` for key
  * bindings. It sends the same line down the same socket (ipc.cpp), but with
- * nothing to load: fanshell-qs-shell links Qt, and libmpv with all of
- * ffmpeg's codecs behind it, which takes 400 ms on a laptop CPU before the
- * first byte is sent, on every key press. */
+ * nothing to load: fanshell-qs-shell links Qt and everything else the bar
+ * needs, which is a noticeable wait on a laptop CPU before the first byte is
+ * sent, on every key press. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

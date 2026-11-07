@@ -24,6 +24,8 @@ shell/fanshell-qs-shell:
 install: all
 	install -d $(BINDIR)
 	install -m 755 shell/fanshell-qs-shell shell/fanshell-qs-ipc $(BINDIR)
+	test ! -e shell/fanshell-qs-wallpaper-video \
+	    || install -m 755 shell/fanshell-qs-wallpaper-video $(BINDIR)
 	install -m 755 $(SCRIPTS) $(BINDIR)
 
 # Not under $(PREFIX): PAM looks for services in /etc/pam.d.
@@ -36,7 +38,8 @@ link-config:
 	./tools/link-config
 
 uninstall:
-	rm -f $(BINDIR)/fanshell-qs-shell $(BINDIR)/fanshell-qs-ipc
+	rm -f $(BINDIR)/fanshell-qs-shell $(BINDIR)/fanshell-qs-ipc \
+	    $(BINDIR)/fanshell-qs-wallpaper-video
 	for s in $(notdir $(SCRIPTS)); do rm -f $(BINDIR)/$$s; done
 
 clean:

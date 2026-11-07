@@ -56,12 +56,13 @@ WL_MODULES = hypripc hyprstate screenshader wlclient sessionlock
 WL_MOCHDRS = hypripc hyprstate screenshader wlclient sessionlock
 PKGS     += wayland-cursor
 override CXXFLAGS += -Igen
-# Video wallpapers, played by libmpv; without it a video shows its first
-# frame. MPV=0 leaves it out.
+# Video wallpapers, played by libmpv in a program of their own, so the shell
+# loads none of it; without it a video shows its first frame. MPV=0 leaves
+# it out.
 MPV      ?= $(shell pkg-config --exists mpv Qt6OpenGLWidgets && echo 1)
 ifeq ($(MPV),1)
-PKGS     += mpv Qt6OpenGL Qt6OpenGLWidgets
-override CXXFLAGS += -DFANSHELL_QS_HAVE_MPV
+VIDEO_BIN  = fanshell-qs-wallpaper-video
+VIDEO_PKGS = mpv Qt6OpenGL Qt6OpenGLWidgets Qt6Widgets Qt6Gui Qt6Core xcb
 endif
 endif
 
@@ -108,7 +109,7 @@ MODULES  = widgets popup surface procutil wmstate oxwmipc oxwmstate qtileipc \
            launcher ipc clipboard system battery wallpaper notification osd \
            hardwarecontrols powerprofiles media menu xembedtray vibrance displays \
            controlpanel keyboard mouse idleinhibit lockscreen nightlight \
-           gamemode status capture wallpapervideo $(WL_MODULES)
+           gamemode status capture wallpaperimage $(WL_MODULES)
 # headers containing Q_OBJECT classes
 MOCHDRS  = widgets popup procutil wmstate oxwmipc oxwmstate qtilestate calendar \
            pills panel \
@@ -119,7 +120,7 @@ MOCHDRS  = widgets popup procutil wmstate oxwmipc oxwmstate qtilestate calendar 
 
 OBJ      = $(MODULES:%=%.o) main.o $(MOCHDRS:%=moc_%.o) $(WL_OBJ)
 
-all: fanshell-qs-shell fanshell-qs-ipc
+all: fanshell-qs-shell fanshell-qs-ipc $(VIDEO_BIN)
 ifneq ($(WAYLAND),1)
 	@echo 'note: built without Hyprland (Wayland) support -- see the top of shell/Makefile'
 endif
@@ -129,6 +130,13 @@ fanshell-qs-ipc: ipcclient.c
 
 fanshell-qs-shell: $(OBJ)
 	$(CXX) -o $@ $(OBJ) $(LDLIBS)
+
+VIDEO_OBJ = wallpapervideo.o wallpaperimage.o surface.o
+wallpapervideo.o: override CXXFLAGS += $(shell pkg-config --cflags $(VIDEO_PKGS))
+wallpapervideo.o: $(wildcard *.h) .build-flags
+fanshell-qs-wallpaper-video: $(VIDEO_OBJ)
+	$(CXX) -o $@ $(VIDEO_OBJ) -lLayerShellQtInterface \
+	    $(shell pkg-config --libs $(VIDEO_PKGS))
 
 moc_%.cpp: %.h
 	$(MOC) $< -o $@
@@ -153,7 +161,7 @@ $(MODULES:%=%.o) main.o: $(WL_GEN_H)
 endif
 
 clean:
-	rm -f fanshell-qs-shell fanshell-qs-ipc *.o moc_*.cpp .build-flags
+	rm -f fanshell-qs-shell fanshell-qs-ipc fanshell-qs-wallpaper-video *.o moc_*.cpp .build-flags
 	rm -rf gen
 
 .PHONY: all clean FORCE

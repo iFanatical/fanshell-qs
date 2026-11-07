@@ -359,7 +359,7 @@ Videos in the wallpaper directory (`.mp4`, `.webm`, `.mkv`, `.mov`, `.m4v`)
 are wallpapers too, marked with a play badge in the picker. Under Hyprland
 they play in the background layer through libmpv, looped and silent and
 decoded on the GPU where mpv can, in a process of their own per output
-(`fanshell-qs-shell wallpaper-video`) so that a heavy video cannot slow the
+(`fanshell-qs-wallpaper-video`) so that a heavy video cannot slow the
 bar, and pause while a fullscreen window
 covers their output or the screen is locked. Under X11, without libmpv, or
 with `wallpaper.video=off`, a video shows its first frame instead, which
@@ -657,9 +657,8 @@ Lua forms `hl.monitor{disabled = true}`, `vrr` and `hl.device` merging
 with a device's rules in `hyprland.lua`.
 
 Key bindings call `fanshell-qs-ipc <target> <function>` rather than
-`fanshell-qs-shell ipc call`. It does the same, without loading Qt and libmpv
-on every key press, which on a laptop takes about 400 ms, so a volume key's
-OSD shows at once.
+`fanshell-qs-shell ipc call`. It does the same, without loading Qt on every
+key press, so a volume key's OSD shows at once.
 
 ## Configuration
 
