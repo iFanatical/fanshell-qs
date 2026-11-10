@@ -308,15 +308,20 @@ EOF_MISSING
         _needs=
         return 0
     fi
-    if [ ! -t 0 ]; then
+    # ASSUME_YES=1 (fanhypr-qs's bootstrap.sh, which asked already)
+    # installs them without asking.
+    if [ "${ASSUME_YES:-0}" = 1 ]; then
+        _answer=yes
+    elif [ ! -t 0 ]; then
         [ "$_required" = 0 ] ||
             die "missing dependencies, and no terminal to ask on; install them and run again"
         _finish_missing
         _needs=
         return 0
+    else
+        printf 'missing dependencies, do you want to install them? [y/N] '
+        read -r _answer || _answer=
     fi
-    printf 'missing dependencies, do you want to install them? [y/N] '
-    read -r _answer || _answer=
     case $_answer in
     [Yy] | [Yy][Ee][Ss]) ;;
     *)
