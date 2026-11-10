@@ -150,15 +150,6 @@ need_shell_wayland() {
 
 # Checks for need_shell_optional().
 
-# An ffmpeg that decodes H.264 and HEVC: Fedora's ffmpeg-free decodes
-# neither, RPM Fusion's ffmpeg both.
-_ffmpeg_decodes_h264_hevc() {
-    command -v ffmpeg >/dev/null 2>&1 || return 1
-    _decoders=$(ffmpeg -hide_banner -decoders 2>/dev/null)
-    case $_decoders in *" h264 "*) ;; *) return 1 ;; esac
-    case $_decoders in *" hevc "*) return 0 ;; *) return 1 ;; esac
-}
-
 # mate-polkit's agent, where the distribution puts it.
 _mate_polkit_agent() {
     for _f in /usr/libexec/polkit-mate-authentication-agent-1 \
@@ -169,21 +160,12 @@ _mate_polkit_agent() {
     return 1
 }
 
-# A VA-API driver that decodes H.264 and HEVC on this machine's GPU, so
-# video wallpapers play on it rather than on the CPU.
-_vaapi_decodes_h264_hevc() {
-    command -v vainfo >/dev/null 2>&1 || return 1
-    _profiles=$(vainfo 2>/dev/null)
-    case $_profiles in *VAProfileH264*VAEntrypointVLD*) ;; *) return 1 ;; esac
-    case $_profiles in *VAProfileHEVC*VAEntrypointVLD*) return 0 ;; *) return 1 ;; esac
-}
-
 # Queues what the shell can use but runs without, each feature left out or
-# empty while it is missing (README.md, Optional and Session extras), and
-# what video wallpapers need: libmpv (built in when found), ffmpeg that
-# decodes H.264 and HEVC, and the GPU's VA-API driver. A session repo's
-# install.sh queues it after need_shell and need_shell_wayland, so a fresh
-# install has every feature.
+# empty while it is missing (README.md, Optional and Session extras). A
+# session repo's install.sh queues it after need_shell and
+# need_shell_wayland, so a fresh install has every feature. Video
+# wallpapers are fanvid's (fanvid-qs, tools/need.sh), which the session
+# repos ask about.
 need_shell_optional() {
     need_optional_begin
     need nmcli NetworkManager net-misc/networkmanager networkmanager \
@@ -203,31 +185,7 @@ need_shell_optional() {
     need xsettingsd xsettingsd x11-misc/xsettingsd xsettingsd "GTK/Qt settings for X programs"
     need fn:_mate_polkit_agent mate-polkit mate-extra/mate-polkit mate-polkit \
         "password prompts for privileged actions"
-    # Video wallpapers. On Gentoo, media-video/mpv needs USE libmpv.
-    need pc:mpv mpv-libs-devel media-video/mpv mpv "video wallpapers that play"
-    need fn:_ffmpeg_decodes_h264_hevc ffmpeg media-video/ffmpeg ffmpeg \
-        "video wallpapers' first frames (H.264 and HEVC; RPM Fusion's on Fedora)"
-    need vainfo libva-utils media-video/libva-utils libva-utils "checking the GPU's video decoding"
-    _vaapi_driver
     need_optional_end
-}
-
-# The VA-API driver for this machine's GPU, by vendor. Nothing for a GPU
-# that has none (NVIDIA: mpv decodes with NVDEC or Vulkan there).
-_vaapi_driver() {
-    _gpus=$(lspci 2>/dev/null)
-    case $_gpus in
-    *VGA*Intel* | *Display*Intel*)
-        need fn:_vaapi_decodes_h264_hevc intel-media-driver \
-            media-libs/libva-intel-media-driver intel-media-driver \
-            "video wallpapers decoded on the Intel GPU"
-        ;;
-    *VGA*AMD* | *VGA*ATI* | *Display*AMD*)
-        # On Gentoo this is media-libs/mesa with USE vaapi.
-        need fn:_vaapi_decodes_h264_hevc mesa-va-drivers-freeworld media-libs/mesa \
-            libva-mesa-driver "video wallpapers decoded on the AMD GPU"
-        ;;
-    esac
 }
 
 # Sets _missing to the need() lines whose CHECK fails.
@@ -256,9 +214,10 @@ _finish_missing() {
             printf 'still missing: %s (%s)\n' "$_check" "$_what" >&2
         fi
     done
-    if [ "${distro:-}" = gentoo ]; then
-        printf 'note: on Gentoo, video wallpapers need media-video/mpv with USE libmpv\n' >&2
-        printf '      (and vaapi), and on AMD media-libs/mesa with USE vaapi\n' >&2
+    # A USE flag the needs' packages want there, set by whoever queued them
+    # (fanvid-qs's need_fanvid).
+    if [ "${distro:-}" = gentoo ] && [ -n "${gentoo_note:-}" ]; then
+        printf '%s\n' "$gentoo_note" >&2
     fi
     [ "$_required" = 0 ] || die "missing dependencies"
 }
@@ -327,7 +286,7 @@ EOF_MISSING
     if [ "$distro" = fedora ]; then
         for _one in $_pkgs; do
             case $_one in
-            ffmpeg | mesa-va-drivers-freeworld) _rpmfusion="$_rpmfusion free" ;;
+            ffmpeg | ffmpeg-devel | mesa-va-drivers-freeworld) _rpmfusion="$_rpmfusion free" ;;
             intel-media-driver) _rpmfusion="$_rpmfusion free nonfree" ;;
             esac
         done
