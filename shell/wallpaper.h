@@ -33,13 +33,15 @@
  * to the next one itself, so no wallpaper daemon (awww, hyprpaper) is
  * needed -- or wanted, as it would draw over or under this one.
  *
- * Videos (mp4, webm, mkv, mov, m4v) are wallpapers too. On Wayland, built
- * with libmpv, they play looped and silent in the background layer
- * (fanshell-qs-wallpaper-video), paused while a fullscreen window covers the output or
- * the screen is locked; wallpaper.video=off in shell.conf shows them still.
+ * Videos (mp4, webm, mkv, mov, m4v) are wallpapers too, with fanvid, an
+ * add-on (github.com/iFanatical/fanvid-qs); without it the picker does not
+ * offer them. On Wayland they play looped and silent in the background
+ * layer, from one fanvid process per video for every output showing it,
+ * paused while a fullscreen window covers the output and stopped while the
+ * screen is locked; wallpaper.video=off in shell.conf leaves videos out.
  * Everywhere else -- the picker's thumbnail, the lock screen, the root
  * window on X11, and a layer before its first frame -- a video is its first
- * frame, which ffmpeg extracts once into ~/.cache/fanshell-qs/wallpapers.
+ * frame, which fanvid extracts once into ~/.cache/fanshell-qs/wallpapers.
  *
  * The directory is scanned NON-recursively on purpose -- a `backup/` subtree
  * of old wallpapers lives under it that has no business in the picker. */
@@ -75,8 +77,10 @@ struct Config {
     void save() const;
 };
 
-/* Whether videos play (wallpaper.video in shell.conf, and the player on
- * Wayland), rather than showing their first frame. */
+/* Whether videos are wallpapers: fanvid is there, and wallpaper.video in
+ * shell.conf is not off. */
+bool videosAllowed();
+/* Whether they play (on Wayland), rather than showing their first frame. */
 bool videoPlays();
 
 } /* namespace Wallpapers */
@@ -156,7 +160,7 @@ private:
      * starts at construction, they are normally ready before the picker is
      * first opened. */
     void decodeNext();
-    /* A video's first frame is being extracted for its thumbnail. */
+    /* A video's first frame is being extracted (fanvid) for its thumbnail. */
     bool m_extracting = false;
 
     Wallpapers::Config m_conf;

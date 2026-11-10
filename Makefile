@@ -24,8 +24,8 @@ shell/fanshell-qs-shell:
 install: all
 	install -d $(BINDIR)
 	install -m 755 shell/fanshell-qs-shell shell/fanshell-qs-ipc $(BINDIR)
-	test ! -e shell/fanshell-qs-wallpaper-video \
-	    || install -m 755 shell/fanshell-qs-wallpaper-video $(BINDIR)
+	@# The libmpv player that fanvid (fanvid-qs) replaced.
+	rm -f $(BINDIR)/fanshell-qs-wallpaper-video
 	install -m 755 $(SCRIPTS) $(BINDIR)
 
 # Not under $(PREFIX): PAM looks for services in /etc/pam.d.

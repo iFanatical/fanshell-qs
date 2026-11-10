@@ -7,7 +7,11 @@
 #include <QFileInfo>
 #include <QImageReader>
 #include <QPainter>
+#include <QMutex>
 #include <QProcess>
+#include <QStandardPaths>
+
+#include "paths.h"
 
 bool Wallpapers::isVideo(const QString &path)
 {
@@ -38,7 +42,40 @@ QString stillCachePath(const QString &path)
            + QStringLiteral(".png");
 }
 
+/* The protocol version of fanvid's command line, stdin and stdout this
+ * shell speaks; see fanvid-qs's README. */
+constexpr int fanvidProtocol = 1;
+
 } /* namespace */
+
+QString Wallpapers::fanvid()
+{
+    static QMutex lock;
+    static bool looked = false;
+    static QString found;
+    QMutexLocker locker(&lock);
+    if (looked)
+        return found;
+    looked = true;
+    QString path = Paths::setting(QStringLiteral("wallpaper.player"));
+    if (path.isEmpty())
+        path = QStandardPaths::findExecutable(QStringLiteral("fanvid"));
+    if (path.isEmpty())
+        return found;
+    QProcess p;
+    p.start(path, {QStringLiteral("--protocol")});
+    const bool ran = p.waitForFinished(3000) && p.exitStatus() == QProcess::NormalExit
+                     && p.exitCode() == 0;
+    const int version = ran ? p.readAllStandardOutput().trimmed().toInt() : 0;
+    if (version == fanvidProtocol)
+        found = path;
+    else if (ran)
+        qWarning("fanshell-qs: %s speaks protocol %d, not %d; videos are not wallpapers",
+                 qPrintable(path), version, fanvidProtocol);
+    else
+        qWarning("fanshell-qs: %s does not run; videos are not wallpapers", qPrintable(path));
+    return found;
+}
 
 QString Wallpapers::cachedStill(const QString &path)
 {
@@ -55,32 +92,22 @@ QString Wallpapers::still(const QString &path)
     const QString cached = stillCachePath(path);
     if (QFileInfo::exists(cached))
         return cached;
+    const QString player = fanvid();
+    if (player.isEmpty())
+        return QString();
     QDir().mkpath(QFileInfo(cached).absolutePath());
-    /* Written aside and renamed, so a half-written frame is never read. */
-    const QString part = cached + QStringLiteral(".part");
-    QProcess ffmpeg;
-    ffmpeg.start(QStringLiteral("ffmpeg"),
-                 {QStringLiteral("-nostdin"), QStringLiteral("-v"), QStringLiteral("error"),
-                  QStringLiteral("-y"), QStringLiteral("-i"), path,
-                  QStringLiteral("-frames:v"), QStringLiteral("1"),
-                  QStringLiteral("-f"), QStringLiteral("image2"),
-                  QStringLiteral("-c:v"), QStringLiteral("png"), part});
-    if (!ffmpeg.waitForFinished(30000) || ffmpeg.exitStatus() != QProcess::NormalExit
-        || ffmpeg.exitCode() != 0) {
-        if (ffmpeg.error() == QProcess::FailedToStart)
-            qWarning("fanshell-qs: ffmpeg is needed for a video wallpaper's still");
-        else
-            qWarning("fanshell-qs: ffmpeg cannot read %s: %s", qPrintable(path),
-                     ffmpeg.readAllStandardError().trimmed().constData());
-        ffmpeg.kill();
-        QFile::remove(part);
+    /* fanvid writes it aside and renames it, so a half-written frame is
+     * never read. */
+    QProcess p;
+    p.start(player, {QStringLiteral("still"), path, cached});
+    if (!p.waitForFinished(30000) || p.exitStatus() != QProcess::NormalExit
+        || p.exitCode() != 0) {
+        qWarning("fanshell-qs: fanvid cannot read %s: %s", qPrintable(path),
+                 p.readAllStandardError().trimmed().constData());
+        p.kill();
         return QString();
     }
-    if (!QFile::rename(part, cached)) {
-        QFile::remove(part);
-        return QFileInfo::exists(cached) ? cached : QString();
-    }
-    return cached;
+    return QFileInfo::exists(cached) ? cached : QString();
 }
 
 QImage Wallpapers::render(const QString &source, const QString &mode, const QSize &size)

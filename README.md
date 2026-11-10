@@ -198,9 +198,7 @@ out or empty.
 | pw-play or paplay | `pipewire-utils` or `pulseaudio-utils` | `media-video/pipewire` | the optional volume-change sound |
 | A terminal | `alacritty` or `xterm` | `x11-terms/alacritty` or `x11-terms/xterm` | `Terminal=true` launcher entries and the menu's actions (`$TERMINAL`, then alacritty for the menu, xterm for the launcher) |
 | xdg-utils | `xdg-utils` | `x11-misc/xdg-utils` | the menu opening URLs and files |
-| ffmpeg | `ffmpeg` from RPM Fusion (Fedora's own `ffmpeg-free` decodes neither H.264 nor HEVC) | `media-video/ffmpeg` | a video wallpaper's first frame: its thumbnail, the lock screen, and the wallpaper itself under X11; and, through libmpv, playing it |
-| The GPU's VA-API driver | Intel: `intel-media-driver` (RPM Fusion nonfree); AMD: `mesa-va-drivers-freeworld` (RPM Fusion) | Intel: `media-libs/libva-intel-media-driver`; AMD: `media-libs/mesa` with USE `vaapi` | video wallpapers decoded on the GPU instead of the CPU |
-| libmpv (build time) | `mpv-libs-devel` | `media-video/mpv` with USE `libmpv` (and `vaapi` for decoding straight into the GPU's memory) | video wallpapers that play, under Hyprland; `MPV=0` builds without it |
+| [fanvid](https://github.com/iFanatical/fanvid-qs) | built from source (it needs RPM Fusion's `ffmpeg`, as Fedora's `ffmpeg-free` decodes neither H.264 nor HEVC, and the GPU's VA-API driver: Intel's `intel-media-driver`, AMD's `mesa-va-drivers-freeworld`) | built from source (`media-video/ffmpeg`; `media-libs/libva-intel-media-driver`, or `media-libs/mesa` with USE `vaapi`) | video wallpapers: without it the picker offers only images |
 
 ### Session extras
 
@@ -355,16 +353,16 @@ window's background, published in `_XROOTPMAP_ID` for picom. The picker's
 `wallpaper.conf` does not exist yet, the path in an old `~/.fehbg` is imported
 once. After that, `~/.fehbg` can be deleted.
 
-Videos in the wallpaper directory (`.mp4`, `.webm`, `.mkv`, `.mov`, `.m4v`)
-are wallpapers too, marked with a play badge in the picker. Under Hyprland
-they play in the background layer through libmpv, looped and silent and
-decoded on the GPU where mpv can, in a process of their own per output
-(`fanshell-qs-wallpaper-video`) so that a heavy video cannot slow the
-bar, and pause while a fullscreen window
-covers their output or the screen is locked. Under X11, without libmpv, or
-with `wallpaper.video=off`, a video shows its first frame instead, which
-ffmpeg extracts once into `~/.cache/fanshell-qs/wallpapers`; the lock screen
-blurs that frame too. Runtime-only state (IPC sockets,
+With [fanvid](https://github.com/iFanatical/fanvid-qs) installed, videos in
+the wallpaper directory (`.mp4`, `.webm`, `.mkv`, `.mov`, `.m4v`) are
+wallpapers too, marked with a play badge in the picker. Under Hyprland they
+play in the background layer, looped and silent, decoded on the GPU: one
+fanvid process per video, for every output that shows it. A video pauses
+while a fullscreen window covers its output, and stops while the screen is
+locked, starting afresh after. Under X11 a video shows its first frame
+instead, which fanvid extracts once into `~/.cache/fanshell-qs/wallpapers`;
+the lock screen blurs that frame too. Without fanvid, or with
+`wallpaper.video=off`, the picker offers only images. Runtime-only state (IPC sockets,
 scratchpad window ids, the `maximize` layout memo) stays in
 `$XDG_RUNTIME_DIR`: it means nothing after a reboot.
 
@@ -687,7 +685,8 @@ ups.community=public
 | `wallpaper.mode` | how a new pick is laid out on an output, as feh's modes: `fill` (default), `center`, `max`, `scale`, `tile`; what is already set keeps the mode it was set with |
 | `wallpaper.fade` | `off` makes a new pick appear at once instead of cross-fading (for weaker machines); default `on` |
 | `wallpaper.fade_ms` | length of that cross-fade in milliseconds (default `500`, up to `10000`) |
-| `wallpaper.video` | `off` shows a video wallpaper's first frame instead of playing it; `gpu` plays it only when the GPU decodes it, showing the first frame of one that would decode on the CPU (AV1 on older Intel graphics, say, which takes several cores at 4K); default `on` |
+| `wallpaper.video` | `off` leaves videos out of the picker even with fanvid installed; default `on`. A video the GPU cannot decode shows its first frame |
+| `wallpaper.player` | fanvid's path, when it is not on `PATH` |
 | `weather.unit` | `C` for Celsius, default Fahrenheit |
 | `ups.host` | the UPS's SNMP card; unset, the power pill shows the CPU+GPU estimate instead (see [UPS](#ups)) |
 | `ups.community` | SNMPv1 community (default `public`) |

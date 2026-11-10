@@ -10,6 +10,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QProcess>
+#include <QSet>
 #include <QStandardPaths>
 #include <QThread>
 #include <QVariantAnimation>
@@ -49,13 +50,6 @@ QString validMode(const QString &mode, const QString &fallback)
 /* The path the last feh-written ~/.fehbg shows, for a one-time import. It is
  * a shell script whose last word is the image:
  *     feh --no-fehbg --bg-fill '/path/to/file.jpg' */
-/* The video player: beside this binary, when built with libmpv. */
-QString videoPlayer()
-{
-    return QCoreApplication::applicationDirPath()
-           + QStringLiteral("/fanshell-qs-wallpaper-video");
-}
-
 QString fehbgPath()
 {
     QFile file(QDir::homePath() + QStringLiteral("/.fehbg"));
@@ -281,13 +275,225 @@ private:
 
 } /* namespace */
 
+/* Video wallpapers on Wayland: a fanvid process per video, playing it on
+ * every output that shows it from one decoder, and told on stdin which
+ * outputs to add, take off, fade out, pause and play (see fanvid-qs's
+ * README). None runs under the lock screen: each stops, and starts afresh on
+ * unlock, as it would hold its decoder for nothing (and an mpv-based player
+ * that ran for days only grew). The lock screen is a process of its own, so
+ * it is looked for now and then. */
+class VideoHost : public QObject {
+public:
+    static VideoHost *instance()
+    {
+        static auto *host = new VideoHost();
+        return host;
+    }
+
+    /* Called when the video is off `output`: taken off by hide(), or its
+     * player ended. */
+    void watch(const QString &output, std::function<void()> gone) { m_gone[output] = gone; }
+    void unwatch(const QString &output) { m_gone.remove(output); }
+
+    /* Plays `path` on `output`, laid out as `mode` (feh's modes). */
+    void show(const QString &output, const QString &path, const QString &mode)
+    {
+        for (auto it = m_players.begin(); it != m_players.end(); ++it)
+            if (it.key() != path && it->outputs.contains(output))
+                leave(*it, output, 0);
+        Player &p = m_players[path];
+        const bool same = p.outputs.value(output) == mode;
+        p.outputs[output] = mode;
+        if (p.failed)
+            return;
+        if (p.proc) {
+            if (!same)
+                send(p, QStringLiteral("add %1 %2").arg(output, mode));
+        } else if (!p.starting) {
+            /* After this turn of the event loop: the other outputs showing
+             * it are likely asking too, and start with it. */
+            p.starting = true;
+            QTimer::singleShot(0, this, [this, path]() { start(path); });
+        }
+        m_lockPoll.start();
+    }
+
+    /* Takes `output`'s video off, fading it out over `ms`. */
+    void hide(const QString &output, int ms)
+    {
+        for (auto it = m_players.begin(); it != m_players.end(); ++it)
+            if (it->outputs.contains(output)) {
+                leave(*it, output, ms);
+                if (it->outputs.isEmpty() && !it->proc && !it->starting)
+                    m_players.erase(it);
+                return;
+            }
+        goneLater(output);
+    }
+
+    void setPaused(const QString &output, bool paused)
+    {
+        for (Player &p : m_players)
+            if (p.outputs.contains(output)) {
+                if (paused)
+                    p.paused.insert(output);
+                else
+                    p.paused.remove(output);
+                send(p, QStringLiteral("%1 %2").arg(paused ? "pause" : "play", output));
+            }
+    }
+
+private:
+    struct Player {
+        QProcess *proc = nullptr;
+        QHash<QString, QString> outputs; /* output: mode */
+        QSet<QString> paused;
+        /* Told to go, and not yet gone. */
+        QSet<QString> leaving;
+        bool starting = false;
+        /* Stopped for the lock screen, to start again after. */
+        bool lockStopped = false;
+        /* Ended on its own: not started again until shown afresh. */
+        bool failed = false;
+    };
+
+    VideoHost()
+    {
+        m_lockPoll.setInterval(2000);
+        connect(&m_lockPoll, &QTimer::timeout, this, &VideoHost::syncLock);
+    }
+
+    void send(Player &p, const QString &line)
+    {
+        if (p.proc && p.proc->state() != QProcess::NotRunning && !p.lockStopped)
+            p.proc->write((line + QLatin1Char('\n')).toUtf8());
+    }
+
+    void leave(Player &p, const QString &output, int ms)
+    {
+        p.outputs.remove(output);
+        p.paused.remove(output);
+        if (p.proc && p.proc->state() != QProcess::NotRunning && !p.lockStopped) {
+            p.leaving.insert(output);
+            send(p, ms > 0 ? QStringLiteral("fade %1 %2").arg(output).arg(ms)
+                           : QStringLiteral("remove %1").arg(output));
+        } else {
+            goneLater(output);
+        }
+    }
+
+    void gone(const QString &output)
+    {
+        const auto it = m_gone.constFind(output);
+        if (it != m_gone.constEnd())
+            (*it)();
+    }
+
+    void goneLater(const QString &output)
+    {
+        QTimer::singleShot(0, this, [this, output]() { gone(output); });
+    }
+
+    void start(const QString &path)
+    {
+        const auto it = m_players.find(path);
+        if (it == m_players.end())
+            return;
+        Player &p = *it;
+        p.starting = false;
+        if (p.proc || p.failed)
+            return;
+        if (p.outputs.isEmpty()) {
+            m_players.erase(it);
+            return;
+        }
+        /* syncLock() starts it after. */
+        if (LockScreen::isLocked())
+            return;
+        QStringList args{QStringLiteral("play"), path};
+        for (auto o = p.outputs.constBegin(); o != p.outputs.constEnd(); ++o)
+            args << o.key() + QLatin1Char(':') + o.value();
+        auto *proc = new QProcess(this);
+        p.proc = proc;
+        proc->setProcessChannelMode(QProcess::ForwardedErrorChannel);
+        connect(proc, &QProcess::readyReadStandardOutput, this, [this, proc]() {
+            while (proc->canReadLine()) {
+                const QString line = QString::fromUtf8(proc->readLine()).trimmed();
+                if (!line.startsWith(QLatin1String("gone ")))
+                    continue;
+                const QString output = line.mid(5);
+                for (Player &q : m_players)
+                    if (q.proc == proc)
+                        q.leaving.remove(output);
+                gone(output);
+            }
+        });
+        connect(proc, &QProcess::finished, this,
+                [this, path, proc]() { finished(path, proc); });
+        proc->start(Wallpapers::fanvid(), args);
+        for (const QString &o : std::as_const(p.paused))
+            send(p, QStringLiteral("pause %1").arg(o));
+    }
+
+    void finished(const QString &path, QProcess *proc)
+    {
+        proc->deleteLater();
+        const auto it = m_players.find(path);
+        if (it == m_players.end() || it->proc != proc)
+            return;
+        Player &p = *it;
+        p.proc = nullptr;
+        QStringList off(p.leaving.cbegin(), p.leaving.cend());
+        p.leaving.clear();
+        if (p.lockStopped) {
+            p.lockStopped = false;
+        } else if (!p.outputs.isEmpty()) {
+            /* On its own, with outputs to play on: it failed (fanvid says
+             * why), and the still beneath shows instead. */
+            p.failed = true;
+            off += p.outputs.keys();
+            p.outputs.clear();
+        }
+        if (p.outputs.isEmpty() && !p.starting)
+            m_players.erase(it);
+        for (const QString &o : std::as_const(off))
+            gone(o);
+        if (m_players.isEmpty())
+            m_lockPoll.stop();
+    }
+
+    void syncLock()
+    {
+        if (m_players.isEmpty()) {
+            m_lockPoll.stop();
+            return;
+        }
+        const bool locked = LockScreen::isLocked();
+        for (auto it = m_players.begin(); it != m_players.end(); ++it) {
+            Player &p = *it;
+            if (locked && p.proc && !p.lockStopped) {
+                /* It exits when stdin closes; the first frame beneath shows
+                 * meanwhile. */
+                p.lockStopped = true;
+                p.proc->closeWriteChannel();
+            } else if (!locked && !p.proc && !p.failed && !p.starting && !p.outputs.isEmpty()) {
+                start(it.key());
+            }
+        }
+    }
+
+    QHash<QString, Player> m_players; /* by video */
+    QHash<QString, std::function<void()>> m_gone;
+    QTimer m_lockPoll;
+};
+
 /* One output's wallpaper on Wayland: a background-layer surface covering
  * it, beneath every window. A new wallpaper fades in over the old one.
  *
- * A video plays in a process of its own (wallpapervideo.cpp), on a surface
- * over this one, while this one shows its first frame: started once the
- * fade to that frame is done, and told to fade to the next wallpaper itself
- * and go, this one showing that wallpaper beneath it meanwhile. */
+ * A video plays over it (VideoHost, fanvid) while it shows the video's
+ * first frame: started once the fade to that frame is done, and faded out
+ * over the next wallpaper, which it shows beneath meanwhile, before the next
+ * video starts. */
 class WallpaperLayer : public QWidget {
 public:
     explicit WallpaperLayer(QScreen *screen) : QWidget(nullptr), m_output(screen->name())
@@ -316,23 +522,17 @@ public:
             update();
             startVideo();
         });
-        /* A video pauses under a fullscreen window, and stops under the
-         * lock screen, to start afresh after it (a player that runs for
-         * days only grows). The lock screen is a process of its own, so it
-         * is looked for now and then. */
+        /* A video pauses under a fullscreen window. */
         QObject::connect(WmState::instance(), &WmState::changed, this,
                          [this]() { syncPaused(); });
-        m_lockPoll.setInterval(2000);
-        QObject::connect(&m_lockPoll, &QTimer::timeout, this, [this]() { syncLock(); });
+        VideoHost::instance()->watch(m_output, [this]() { videoGone(); });
     }
 
     ~WallpaperLayer() override
     {
-        if (m_video) {
-            m_video->disconnect();
-            m_video->closeWriteChannel();
-            m_video->waitForFinished(1000);
-        }
+        VideoHost::instance()->unwatch(m_output);
+        if (!m_videoPath.isEmpty())
+            VideoHost::instance()->hide(m_output, 0);
     }
 
     /* `image` is what to show, already laid out; `path` is the wallpaper,
@@ -341,7 +541,8 @@ public:
                       bool video, int fadeMs)
     {
         const QString next = video ? path : QString();
-        if (m_video && !m_stopping && next == m_videoPath && mode == m_videoMode) {
+        if (!m_videoPath.isEmpty() && !m_stopping && next == m_videoPath
+            && mode == m_videoMode) {
             m_to = image;
             update();
             return;
@@ -349,15 +550,17 @@ public:
         m_anim.stop();
         m_pendingPath = next;
         m_pendingMode = mode;
-        if (m_video) {
-            /* Beneath the video, so at once; the video fades to it. */
+        if (!m_videoPath.isEmpty()) {
+            /* Beneath the video, so at once; the video fades out over it. */
             m_from = QImage();
             m_to = image;
             m_t = 1.0;
             update();
             /* One already on its way out keeps the fade it was given. */
-            if (!m_stopping)
-                stopVideo(fadeMs, mode, path);
+            if (!m_stopping) {
+                m_stopping = true;
+                VideoHost::instance()->hide(m_output, fadeMs);
+            }
             return;
         }
         m_from = fadeMs > 0 && isVisible() ? m_to : QImage();
@@ -390,78 +593,44 @@ protected:
     }
 
 private:
-    /* The pending video, once nothing else is on its way out and the
-     * session is not locked. */
+    /* The pending video, once nothing else is on its way out. */
     void startVideo()
     {
-        if (m_video || m_pendingPath.isEmpty() || m_anim.state() == QAbstractAnimation::Running)
+        if (!m_videoPath.isEmpty() || m_pendingPath.isEmpty()
+            || m_anim.state() == QAbstractAnimation::Running)
             return;
-        if (LockScreen::isLocked()) {
-            /* syncLock() starts it after. */
-            m_lockPoll.start();
-            return;
-        }
         m_videoPath = m_pendingPath;
         m_videoMode = m_pendingMode;
         m_pendingPath.clear();
-        auto *proc = new QProcess(this);
-        m_video = proc;
-        proc->setProcessChannelMode(QProcess::ForwardedChannels);
-        QObject::connect(proc, &QProcess::finished, this, [this, proc]() {
-            proc->deleteLater();
-            if (m_video != proc)
-                return;
-            m_video = nullptr;
-            m_stopping = false;
-            m_videoPath.clear();
-            startVideo();
-        });
-        proc->start(videoPlayer(), {m_output, m_videoMode, m_videoPath});
         m_paused = -1;
-        m_lockPoll.start();
+        VideoHost::instance()->show(m_output, m_videoPath, m_videoMode);
         syncPaused();
     }
 
-    /* Has the video cross-fade to `path` (laid out as `mode`) over `ms`
-     * and exit; at once when `ms` is 0. */
-    void stopVideo(int ms, const QString &mode, const QString &path)
+    /* The video is off this output: the next one may start, if it was
+     * taken off for one. A player that ended by itself is not started again;
+     * the first frame beneath stays. */
+    void videoGone()
     {
-        m_stopping = true;
-        if (ms > 0 && !path.isEmpty())
-            m_video->write(QStringLiteral("fade %1 %2 %3\n").arg(ms).arg(mode, path).toUtf8());
-        m_video->closeWriteChannel();
-    }
-
-    /* Stops the video when the session locks, keeping it pending, and
-     * starts it again when it unlocks. Polled while there is a video. */
-    void syncLock()
-    {
-        if (!m_video && m_pendingPath.isEmpty()) {
-            m_lockPoll.stop();
+        if (m_videoPath.isEmpty())
             return;
-        }
-        if (!LockScreen::isLocked()) {
+        const bool asked = m_stopping;
+        m_stopping = false;
+        m_videoPath.clear();
+        if (asked)
             startVideo();
-            return;
-        }
-        /* The first frame beneath shows meanwhile. */
-        if (m_video && !m_stopping) {
-            m_pendingPath = m_videoPath;
-            m_pendingMode = m_videoMode;
-            stopVideo(0, QString(), QString());
-        }
     }
 
     void syncPaused()
     {
-        if (!m_video || m_stopping)
+        if (m_videoPath.isEmpty() || m_stopping)
             return;
         const WmState::Monitor *m = WmState::instance()->monitorByName(m_output);
         const int paused = m && m->fullscreen;
         if (paused == m_paused)
             return;
         m_paused = paused;
-        m_video->write(paused ? "pause\n" : "play\n");
+        VideoHost::instance()->setPaused(m_output, paused);
     }
 
     QString m_output;
@@ -469,20 +638,15 @@ private:
     QImage m_to;
     qreal m_t = 1.0;
     QVariantAnimation m_anim;
-    QProcess *m_video = nullptr;
-    /* Told to fade out and go; it is not the wallpaper any more. */
-    bool m_stopping = false;
+    /* The video on this output, and whether it is fading out. */
     QString m_videoPath;
     QString m_videoMode;
+    bool m_stopping = false;
     /* Waiting for the fade or the old video to finish. */
     QString m_pendingPath;
     QString m_pendingMode;
     int m_paused = -1;
-    QTimer m_lockPoll;
 };
-
-namespace {
-} /* namespace */
 
 /* ------------------------------------------------------------- Wallpapers */
 
@@ -530,11 +694,15 @@ void Wallpapers::Config::save() const
                  qPrintable(Paths::configFile(QLatin1String(stateName))));
 }
 
+bool Wallpapers::videosAllowed()
+{
+    return Paths::setting(QStringLiteral("wallpaper.video")).toLower() != QLatin1String("off")
+           && !fanvid().isEmpty();
+}
+
 bool Wallpapers::videoPlays()
 {
-    return Surface::wayland() && QFileInfo(videoPlayer()).isExecutable()
-           && Paths::setting(QStringLiteral("wallpaper.video")).toLower()
-                  != QLatin1String("off");
+    return Surface::wayland() && videosAllowed();
 }
 
 
@@ -712,13 +880,14 @@ void WallpaperPicker::rescan()
 {
     /* Deliberately not recursive: see wallpaper.h. */
     QDir dir(wallpaperDir());
-    const QStringList globs{
-        QStringLiteral("*.png"),  QStringLiteral("*.jpg"),
-        QStringLiteral("*.jpeg"), QStringLiteral("*.webp"),
-        QStringLiteral("*.gif"),  QStringLiteral("*.bmp"),
-        QStringLiteral("*.mp4"),  QStringLiteral("*.webm"),
-        QStringLiteral("*.mkv"),  QStringLiteral("*.mov"),
-        QStringLiteral("*.m4v")};
+    QStringList globs{QStringLiteral("*.png"),  QStringLiteral("*.jpg"),
+                      QStringLiteral("*.jpeg"), QStringLiteral("*.webp"),
+                      QStringLiteral("*.gif"),  QStringLiteral("*.bmp")};
+    /* Videos are wallpapers only with fanvid, for their first frames and
+     * for playing them. */
+    if (Wallpapers::videosAllowed())
+        globs << QStringLiteral("*.mp4") << QStringLiteral("*.webm") << QStringLiteral("*.mkv")
+              << QStringLiteral("*.mov") << QStringLiteral("*.m4v");
     const QFileInfoList files =
         dir.entryInfoList(globs, QDir::Files | QDir::Readable, QDir::Name);
 
@@ -761,7 +930,7 @@ void WallpaperPicker::decodeNext()
             continue;
         const QString image = Wallpapers::cachedStill(w.path);
         if (image.isEmpty()) {
-            /* A video's first frame takes ffmpeg a moment: off the GUI
+            /* A video's first frame takes fanvid a moment: off the GUI
              * thread, then back here. */
             m_extracting = true;
             m_decoder.stop();
@@ -857,8 +1026,8 @@ void WallpaperPicker::drawLayers(const Wallpapers::Config &conf, bool fade,
             if (choice.path.isEmpty())
                 continue;
             const QImage img = Wallpapers::render(choice.path, choice.mode, o.size);
-            /* A video that plays does without its still (no ffmpeg): black
-             * until its first frame. */
+            /* A video that plays does without its still: black until its
+             * first frame. */
             if (img.isNull() && !(plays && Wallpapers::isVideo(choice.path))) {
                 *failed = choice.path;
                 return;
