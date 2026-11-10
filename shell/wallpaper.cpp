@@ -316,12 +316,14 @@ public:
             update();
             startVideo();
         });
-        /* A video pauses while nobody can see it. The lock screen is a
-         * process of its own, so it is looked for now and then. */
+        /* A video pauses under a fullscreen window, and stops under the
+         * lock screen, to start afresh after it (a player that runs for
+         * days only grows). The lock screen is a process of its own, so it
+         * is looked for now and then. */
         QObject::connect(WmState::instance(), &WmState::changed, this,
                          [this]() { syncPaused(); });
         m_lockPoll.setInterval(2000);
-        QObject::connect(&m_lockPoll, &QTimer::timeout, this, [this]() { syncPaused(); });
+        QObject::connect(&m_lockPoll, &QTimer::timeout, this, [this]() { syncLock(); });
     }
 
     ~WallpaperLayer() override
@@ -388,11 +390,17 @@ protected:
     }
 
 private:
-    /* The pending video, once nothing else is on its way out. */
+    /* The pending video, once nothing else is on its way out and the
+     * session is not locked. */
     void startVideo()
     {
         if (m_video || m_pendingPath.isEmpty() || m_anim.state() == QAbstractAnimation::Running)
             return;
+        if (LockScreen::isLocked()) {
+            /* syncLock() starts it after. */
+            m_lockPoll.start();
+            return;
+        }
         m_videoPath = m_pendingPath;
         m_videoMode = m_pendingMode;
         m_pendingPath.clear();
@@ -406,7 +414,6 @@ private:
             m_video = nullptr;
             m_stopping = false;
             m_videoPath.clear();
-            m_lockPoll.stop();
             startVideo();
         });
         proc->start(videoPlayer(), {m_output, m_videoMode, m_videoPath});
@@ -419,11 +426,30 @@ private:
      * and exit; at once when `ms` is 0. */
     void stopVideo(int ms, const QString &mode, const QString &path)
     {
-        m_lockPoll.stop();
         m_stopping = true;
         if (ms > 0 && !path.isEmpty())
             m_video->write(QStringLiteral("fade %1 %2 %3\n").arg(ms).arg(mode, path).toUtf8());
         m_video->closeWriteChannel();
+    }
+
+    /* Stops the video when the session locks, keeping it pending, and
+     * starts it again when it unlocks. Polled while there is a video. */
+    void syncLock()
+    {
+        if (!m_video && m_pendingPath.isEmpty()) {
+            m_lockPoll.stop();
+            return;
+        }
+        if (!LockScreen::isLocked()) {
+            startVideo();
+            return;
+        }
+        /* The first frame beneath shows meanwhile. */
+        if (m_video && !m_stopping) {
+            m_pendingPath = m_videoPath;
+            m_pendingMode = m_videoMode;
+            stopVideo(0, QString(), QString());
+        }
     }
 
     void syncPaused()
@@ -431,7 +457,7 @@ private:
         if (!m_video || m_stopping)
             return;
         const WmState::Monitor *m = WmState::instance()->monitorByName(m_output);
-        const int paused = (m && m->fullscreen) || LockScreen::isLocked();
+        const int paused = m && m->fullscreen;
         if (paused == m_paused)
             return;
         m_paused = paused;
