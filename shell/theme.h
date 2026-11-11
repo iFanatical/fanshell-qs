@@ -18,8 +18,8 @@ inline const QColor surfaceHover ("#444b6a");
 inline const QColor border       ("#444b6a");
 inline const QColor text         ("#dddddd");
 inline const QColor textMuted    ("#787c99");
-inline const QColor accent       ("#bc70ff");  /* purple/pink accent */
-inline const QColor selected     ("#bc70ff");  /* purple/pink selection */
+inline const QColor accent       ("#7dcfff");  /* cyan accent */
+inline const QColor selected     ("#7dcfff");  /* cyan selection */
 inline const QColor urgent       ("#f7768e");
 inline const QColor transparent  (0, 0, 0, 0);
 inline const QColor textStrong   ("#c0caf5");
@@ -45,9 +45,9 @@ inline const QColor brightmagenta("#bb9af7");
 inline const QColor brightcyan   ("#449dab");
 inline const QColor brightwhite  ("#acb0d0");
 
-/* Tag states: active = purple/pink, occupied (has windows) = white,
+/* Tag states: active = cyan, occupied (has windows) = white,
  * empty/inactive = gray, urgent = Theme::urgent. */
-inline const QColor tagActive   ("#bc70ff");
+inline const QColor tagActive   ("#7dcfff");
 inline const QColor tagOccupied ("#dddddd");
 inline const QColor tagEmpty    ("#565f89");
 
