@@ -237,6 +237,20 @@ detect_distro() {
     done
 }
 
+# Fedora: _fedora_testing_fix PACKAGE...: when dnf cannot install the
+# packages because a dependency is in no enabled repo, prints the names of
+# the updates-testing packages that provide it (none if testing has none
+# either). A repo can briefly run ahead of Fedora's stable one: RPM
+# Fusion's ffmpeg 8.1.3 was built against an openapv still in testing.
+_fedora_testing_fix() {
+    sudo env LC_ALL=C dnf install --assumeno --allowerasing "$@" 2>&1 |
+        sed -n 's/.*nothing provides \(.*\) needed by .*/\1/p' | sort -u |
+        while IFS= read -r _cap; do
+            dnf repoquery --quiet --repo=updates-testing --qf '%{name}\n' \
+                --whatprovides "$_cap" 2>/dev/null
+        done | sort -u | tr '\n' ' '
+}
+
 install_needed() {
     _find_missing
     if [ -z "$_missing" ]; then
@@ -338,7 +352,19 @@ EOF_MISSING
             "https://mirrors.rpmfusion.org/$_repo/fedora/rpmfusion-$_repo-release-$(rpm -E %fedora).noarch.rpm" ||
             die "enabling RPM Fusion ($_repo) failed"
     done
-    sudo "$@" || die "installing the missing dependencies failed"
+    if ! sudo "$@"; then
+        [ "$distro" = fedora ] || die "installing the missing dependencies failed"
+        # Only what the failure needs comes from testing, nothing else.
+        # shellcheck disable=SC2086
+        _testing=$(echo $(_fedora_testing_fix $_pkgs))
+        [ -n "$_testing" ] || die "installing the missing dependencies failed"
+        printf 'the stable repos lack what they need; retrying with %s from updates-testing\n' \
+            "$_testing"
+        # shellcheck disable=SC2086
+        sudo dnf install -y --allowerasing --enablerepo=updates-testing \
+            "--setopt=updates-testing.includepkgs=$(echo $_testing | tr ' ' ,)" $_pkgs ||
+            die "installing the missing dependencies failed, with updates-testing too"
+    fi
 
     _find_missing
     _finish_missing
