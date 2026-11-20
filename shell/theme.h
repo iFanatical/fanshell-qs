@@ -94,11 +94,19 @@ inline constexpr int notificationOpacity = 170; /* 0 transparent .. 255 opaque *
  * compositor draws shadows. */
 inline constexpr int notificationShadowAlpha = 36;
 
+/* All text font() gives is bold: the bar, its popups and the toasts. With
+ * this off, only what asks for bold is. */
+inline constexpr bool boldText = true;
+
 inline QFont font(int pixelSize, bool bold = false)
 {
     QFont f(QString::fromUtf8(fontFamily));
     f.setPixelSize(pixelSize);
-    f.setBold(bold);
+    f.setBold(bold || boldText);
+    /* Set, though empty, so the application font's style name is not
+     * inherited: it overrides the weight, and qt6ct's ("Bold") made all of
+     * the shell bold only where qt6ct is installed. */
+    f.setStyleName(QString());
     return f;
 }
 
