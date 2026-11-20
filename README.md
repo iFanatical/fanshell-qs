@@ -358,8 +358,8 @@ the wallpaper directory (`.mp4`, `.webm`, `.mkv`, `.mov`, `.m4v`) are
 wallpapers too, marked with a play badge in the picker. Under Hyprland they
 play in the background layer, looped and silent, decoded on the GPU: one
 fanvid process per video, for every output that shows it. A video pauses
-while a fullscreen window covers its output, and stops while the screen is
-locked, starting afresh after. Under X11 a video shows its first frame
+while a fullscreen window covers its output or the laptop runs on battery,
+and stops while the screen is locked, starting afresh after. Under X11 a video shows its first frame
 instead, which fanvid extracts once into `~/.cache/fanshell-qs/wallpapers`;
 the lock screen blurs that frame too. Without fanvid, or with
 `wallpaper.video=off`, the picker offers only images. Runtime-only state (IPC sockets,
@@ -687,6 +687,7 @@ ups.community=public
 | `wallpaper.fade_ms` | length of that cross-fade in milliseconds (default `500`, up to `10000`) |
 | `wallpaper.video` | `off` leaves videos out of the picker even with fanvid installed; default `on`. A video the GPU cannot decode shows its first frame |
 | `wallpaper.player` | fanvid's path, when it is not on `PATH` |
+| `wallpaper.video_on_battery` | `play` keeps a video wallpaper playing on battery; default `pause`, which holds its frame until the charger is in |
 | `weather.unit` | `C` for Celsius, default Fahrenheit |
 | `ups.host` | the UPS's SNMP card; unset, the power pill shows the CPU+GPU estimate instead (see [UPS](#ups)) |
 | `ups.community` | SNMPv1 community (default `public`) |

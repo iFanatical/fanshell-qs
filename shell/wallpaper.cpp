@@ -24,6 +24,7 @@
 #include <cstring>
 #include <memory>
 
+#include "battery.h"
 #include "overlay.h"
 #include "paths.h"
 #include "popup.h"
@@ -522,8 +523,10 @@ public:
             update();
             startVideo();
         });
-        /* A video pauses under a fullscreen window. */
+        /* A video pauses under a fullscreen window, and on battery. */
         QObject::connect(WmState::instance(), &WmState::changed, this,
+                         [this]() { syncPaused(); });
+        QObject::connect(BatteryState::instance(), &BatteryState::changed, this,
                          [this]() { syncPaused(); });
         VideoHost::instance()->watch(m_output, [this]() { videoGone(); });
     }
@@ -626,11 +629,25 @@ private:
         if (m_videoPath.isEmpty() || m_stopping)
             return;
         const WmState::Monitor *m = WmState::instance()->monitorByName(m_output);
-        const int paused = m && m->fullscreen;
+        const int paused = (m && m->fullscreen) || pausedOnBattery();
         if (paused == m_paused)
             return;
         m_paused = paused;
         VideoHost::instance()->setPaused(m_output, paused);
+    }
+
+    /* On battery a playing video costs watts (decoding, and the compositor
+     * redrawing every frame) for nothing but looks, so it holds its frame
+     * until the charger is in again: wallpaper.video_on_battery in
+     * shell.conf, `pause` (default) or `play`. */
+    static bool pausedOnBattery()
+    {
+        const BatteryState *b = BatteryState::instance();
+        if (!b->present || b->status != QLatin1String("Discharging"))
+            return false;
+        return Paths::setting(QStringLiteral("wallpaper.video_on_battery"),
+                              QStringLiteral("pause")).toLower()
+               != QLatin1String("play");
     }
 
     QString m_output;

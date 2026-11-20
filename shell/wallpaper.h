@@ -37,8 +37,10 @@
  * add-on (github.com/iFanatical/fanvid-qs); without it the picker does not
  * offer them. On Wayland they play looped and silent in the background
  * layer, from one fanvid process per video for every output showing it,
- * paused while a fullscreen window covers the output and stopped while the
- * screen is locked; wallpaper.video=off in shell.conf leaves videos out.
+ * paused while a fullscreen window covers the output or the laptop is on
+ * battery (wallpaper.video_on_battery=play keeps them going) and stopped
+ * while the screen is locked; wallpaper.video=off in shell.conf leaves
+ * videos out.
  * Everywhere else -- the picker's thumbnail, the lock screen, the root
  * window on X11, and a layer before its first frame -- a video is its first
  * frame, which fanvid extracts once into ~/.cache/fanshell-qs/wallpapers.
